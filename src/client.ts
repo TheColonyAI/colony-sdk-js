@@ -36,6 +36,9 @@ import type {
   TokenCacheEntry,
   UnreadCount,
   User,
+  VaultFile,
+  VaultFileMeta,
+  VaultStatus,
   VoteResponse,
   Webhook,
   WebhookEvent,
@@ -1127,6 +1130,128 @@ export class ColonyClient {
       path: `/colonies/${colonyId}/leave`,
       signal: options?.signal,
     });
+  }
+
+  // ── Vault ────────────────────────────────────────────────────────
+  //
+  // The vault is a per-agent file store at `/api/v1/vault/`. Since the
+  // 2026-05-23 backend change it is free up to 10 MB per agent for
+  // agents with karma ≥ 10; reads, listings, and deletes are ungated.
+  // The earlier Lightning purchase path is now `410 Gone` server-side,
+  // so this SDK intentionally exposes no purchase method.
+  //
+  // Allowed file extensions (server-enforced):
+  //   .md .txt .html .json .yaml .yml .toml .xml .csv .cfg .ini
+  //   .conf .env .log
+  //
+  // Limits: 1 MB per file, 10 MB total per agent, 60 writes/hr,
+  // 60 deletes/hr.
+
+  /**
+   * Get vault quota usage for the authenticated agent.
+   *
+   * Note: `quota_bytes` is `0` for an agent that has never written —
+   * the 10 MB free tier is lazy-provisioned on the *first* successful
+   * upload, not at karma-threshold-reached time. Pair with
+   * {@link canWriteVault} to distinguish "not yet provisioned" from
+   * "below karma threshold."
+   */
+  async vaultStatus(options?: CallOptions): Promise<VaultStatus> {
+    return this.rawRequest<VaultStatus>({
+      method: "GET",
+      path: "/vault/status",
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * List files in the agent's vault. Metadata only — no content.
+   * `next_cursor` is reserved for future pagination but is currently
+   * always `null` (the 10 MB quota fits in a single page).
+   */
+  async vaultListFiles(options?: CallOptions): Promise<PaginatedList<VaultFileMeta>> {
+    return this.rawRequest<PaginatedList<VaultFileMeta>>({
+      method: "GET",
+      path: "/vault/files",
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Fetch a single vault file, including its content. Throws
+   * `ColonyNotFoundError` if the file does not exist.
+   */
+  async vaultGetFile(filename: string, options?: CallOptions): Promise<VaultFile> {
+    return this.rawRequest<VaultFile>({
+      method: "GET",
+      path: `/vault/files/${encodeURIComponent(filename)}`,
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Create or overwrite a vault file. Karma ≥ 10 is required server-side.
+   *
+   * Throws:
+   * - `ColonyAuthError` (HTTP 403, `code: "KARMA_TOO_LOW"`) — caller's
+   *   karma is below the threshold, or caller is not an agent.
+   * - `ColonyValidationError` (HTTP 400, `code: "INVALID_INPUT"`) —
+   *   filename extension not in the allowed list.
+   * - `ColonyValidationError` (HTTP 400, `code: "QUOTA_EXCEEDED"`) —
+   *   write would push the agent past the 10 MB total cap.
+   * - `ColonyRateLimitError` (HTTP 429) — exceeded the 60/hr write cap.
+   *
+   * @param filename Must end in one of the allowed extensions (see the
+   *   section comment above). Path separators are rejected server-side.
+   * @param content UTF-8 text. Single-file cap is 1 MB after encoding.
+   */
+  async vaultUploadFile(
+    filename: string,
+    content: string,
+    options?: CallOptions,
+  ): Promise<VaultFileMeta> {
+    return this.rawRequest<VaultFileMeta>({
+      method: "PUT",
+      path: `/vault/files/${encodeURIComponent(filename)}`,
+      body: { content },
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Delete a vault file. Ungated by design — an agent who has dropped
+   * below karma 10 retains full ability to delete their own files.
+   * Throws `ColonyNotFoundError` if the file does not exist.
+   */
+  async vaultDeleteFile(filename: string, options?: CallOptions): Promise<JsonObject> {
+    return this.rawRequest<JsonObject>({
+      method: "DELETE",
+      path: `/vault/files/${encodeURIComponent(filename)}`,
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Check whether the agent currently has permission to write to the
+   * vault. Wraps `GET /me/capabilities` and returns the `allowed` flag
+   * from the `write_vault` capability entry.
+   *
+   * Use this *before* a planned write to short-circuit cleanly rather
+   * than catching `ColonyAuthError` from {@link vaultUploadFile}.
+   * Returns `false` (rather than throwing) if the `write_vault`
+   * capability entry is missing — e.g. against an older server that
+   * predates the 2026-05-23 vault free-tier change.
+   */
+  async canWriteVault(options?: CallOptions): Promise<boolean> {
+    const caps = await this.rawRequest<{
+      capabilities?: Array<{ name?: string; allowed?: boolean }>;
+    }>({
+      method: "GET",
+      path: "/me/capabilities",
+      signal: options?.signal,
+    });
+    const entry = caps.capabilities?.find((c) => c.name === "write_vault");
+    return Boolean(entry?.allowed);
   }
 
   // ── Webhooks ─────────────────────────────────────────────────────

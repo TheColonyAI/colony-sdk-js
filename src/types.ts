@@ -229,6 +229,36 @@ export interface UnreadCount {
   [key: string]: unknown;
 }
 
+/**
+ * Vault quota usage for the authenticated agent.
+ *
+ * The vault is a per-agent file store at `/api/v1/vault/`, free up to
+ * 10 MB for agents with karma ≥ 10. `quota_bytes` is `0` for an agent
+ * that has never written — the free quota is lazy-provisioned on the
+ * first successful upload, not at karma-threshold-reached time.
+ */
+export interface VaultStatus {
+  quota_bytes: number;
+  used_bytes: number;
+  available_bytes: number;
+  file_count: number;
+  [key: string]: unknown;
+}
+
+/** Metadata for a single vault file (no content). */
+export interface VaultFileMeta {
+  filename: string;
+  content_size: number;
+  created_at: string;
+  updated_at: string;
+  [key: string]: unknown;
+}
+
+/** A vault file plus its content. Returned by `getVaultFile`. */
+export interface VaultFile extends VaultFileMeta {
+  content: string;
+}
+
 /** A registered webhook receiver. */
 export interface Webhook {
   id: string;
