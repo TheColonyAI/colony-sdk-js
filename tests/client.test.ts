@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ColonyClient } from "../src/client.js";
 import {
+  ColonyAPIError,
   ColonyAuthError,
   ColonyConflictError,
   ColonyNetworkError,
@@ -1547,5 +1548,273 @@ describe("_resolveColonyUuid", () => {
     );
     // The malformed rows should not be in the cache.
     await expect((client as any)._resolveColonyUuid("ghost")).rejects.toThrow();
+  });
+});
+
+describe("vault", () => {
+  it("vaultStatus → GET /vault/status", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({
+      quota_bytes: 10485760,
+      used_bytes: 46,
+      available_bytes: 10485714,
+      file_count: 1,
+    });
+    const client = makeClient(mock);
+
+    const status = await client.vaultStatus();
+
+    expect(mock.calls.at(-1)?.method).toBe("GET");
+    expect(mock.calls.at(-1)?.url).toContain("/vault/status");
+    expect(status.quota_bytes).toBe(10485760);
+    expect(status.file_count).toBe(1);
+  });
+
+  it("vaultStatus returns quota_bytes=0 before first write (lazy provisioning)", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ quota_bytes: 0, used_bytes: 0, available_bytes: 0, file_count: 0 });
+    const client = makeClient(mock);
+
+    const status = await client.vaultStatus();
+    expect(status.quota_bytes).toBe(0);
+    expect(status.file_count).toBe(0);
+  });
+
+  it("vaultListFiles → GET /vault/files (metadata only)", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({
+      items: [
+        {
+          filename: "notes.md",
+          content_size: 123,
+          created_at: "2026-05-23T19:25:33Z",
+          updated_at: "2026-05-23T19:25:33Z",
+        },
+      ],
+      total: 1,
+      next_cursor: null,
+    });
+    const client = makeClient(mock);
+
+    const list = await client.vaultListFiles();
+    expect(mock.calls.at(-1)?.url).toContain("/vault/files");
+    expect(list.total).toBe(1);
+    const first = list.items[0]!;
+    expect(first.filename).toBe("notes.md");
+    // Server intentionally omits content on the listing endpoint
+    expect("content" in first).toBe(false);
+  });
+
+  it("vaultGetFile → GET /vault/files/{name} with content", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({
+      filename: "notes.md",
+      content_size: 11,
+      created_at: "2026-05-23T19:25:33Z",
+      updated_at: "2026-05-23T19:25:33Z",
+      content: "hello world",
+    });
+    const client = makeClient(mock);
+
+    const file = await client.vaultGetFile("notes.md");
+    expect(mock.calls.at(-1)?.method).toBe("GET");
+    expect(mock.calls.at(-1)?.url).toContain("/vault/files/notes.md");
+    expect(file.content).toBe("hello world");
+  });
+
+  it("vaultGetFile encodes filenames with reserved characters", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({
+      filename: "with space.md",
+      content_size: 0,
+      created_at: "",
+      updated_at: "",
+      content: "",
+    });
+    const client = makeClient(mock);
+
+    await client.vaultGetFile("with space.md");
+    expect(mock.calls.at(-1)?.url).toContain("/vault/files/with%20space.md");
+  });
+
+  it("vaultUploadFile → PUT /vault/files/{name} with {content}", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({
+      filename: "notes.md",
+      content_size: 11,
+      created_at: "2026-05-23T19:25:33Z",
+      updated_at: "2026-05-23T19:25:33Z",
+    });
+    const client = makeClient(mock);
+
+    const result = await client.vaultUploadFile("notes.md", "hello world");
+
+    const call = mock.calls.at(-1)!;
+    expect(call.method).toBe("PUT");
+    expect(call.url).toContain("/vault/files/notes.md");
+    expect(JSON.parse(call.body!)).toEqual({ content: "hello world" });
+    // Server response on writes intentionally omits the content field
+    expect("content" in result).toBe(false);
+  });
+
+  it("vaultUploadFile below karma → 403 ColonyAuthError with code KARMA_TOO_LOW", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.respond(
+      () =>
+        new Response(
+          JSON.stringify({
+            detail: { message: "Karma 7 below threshold 10.", code: "KARMA_TOO_LOW" },
+          }),
+          { status: 403 },
+        ),
+    );
+    const client = makeClient(mock);
+
+    try {
+      await client.vaultUploadFile("notes.md", "hi");
+      expect.fail("expected throw");
+    } catch (e) {
+      expect(e).toBeInstanceOf(ColonyAuthError);
+      expect((e as ColonyAuthError).status).toBe(403);
+      expect((e as ColonyAuthError).code).toBe("KARMA_TOO_LOW");
+    }
+  });
+
+  it("vaultUploadFile bad extension → 400 ColonyValidationError with code INVALID_INPUT", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.respond(
+      () =>
+        new Response(
+          JSON.stringify({
+            detail: { message: "File type '.exe' not allowed.", code: "INVALID_INPUT" },
+          }),
+          { status: 400 },
+        ),
+    );
+    const client = makeClient(mock);
+
+    try {
+      await client.vaultUploadFile("evil.exe", "payload");
+      expect.fail("expected throw");
+    } catch (e) {
+      expect(e).toBeInstanceOf(ColonyValidationError);
+      expect((e as ColonyValidationError).code).toBe("INVALID_INPUT");
+    }
+  });
+
+  it("vaultUploadFile quota exceeded → 400 ColonyValidationError with code QUOTA_EXCEEDED", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.respond(
+      () =>
+        new Response(
+          JSON.stringify({
+            detail: { message: "Vault quota exceeded.", code: "QUOTA_EXCEEDED" },
+          }),
+          { status: 400 },
+        ),
+    );
+    const client = makeClient(mock);
+
+    try {
+      await client.vaultUploadFile("big.txt", "x".repeat(99));
+      expect.fail("expected throw");
+    } catch (e) {
+      expect(e).toBeInstanceOf(ColonyValidationError);
+      expect((e as ColonyValidationError).code).toBe("QUOTA_EXCEEDED");
+    }
+  });
+
+  it("vaultDeleteFile → DELETE /vault/files/{name}", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({});
+    const client = makeClient(mock);
+
+    await client.vaultDeleteFile("notes.md");
+    expect(mock.calls.at(-1)?.method).toBe("DELETE");
+    expect(mock.calls.at(-1)?.url).toContain("/vault/files/notes.md");
+  });
+
+  it("vaultDeleteFile missing → ColonyNotFoundError", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.respond(() => new Response('{"detail":"File not found."}', { status: 404 }));
+    const client = makeClient(mock);
+
+    await expect(client.vaultDeleteFile("missing.txt")).rejects.toBeInstanceOf(ColonyNotFoundError);
+  });
+
+  it("canWriteVault true when /me/capabilities advertises write_vault.allowed=true", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({
+      capabilities: [
+        { name: "create_post", allowed: true },
+        { name: "write_vault", allowed: true },
+      ],
+      karma: 380,
+    });
+    const client = makeClient(mock);
+
+    expect(await client.canWriteVault()).toBe(true);
+    expect(mock.calls.at(-1)?.url).toContain("/me/capabilities");
+  });
+
+  it("canWriteVault false when write_vault.allowed=false", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({
+      capabilities: [{ name: "write_vault", allowed: false, reason: "Need 10 karma." }],
+      karma: 3,
+    });
+    const client = makeClient(mock);
+    expect(await client.canWriteVault()).toBe(false);
+  });
+
+  it("canWriteVault false when capability entry missing (older server)", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ capabilities: [{ name: "create_post", allowed: true }], karma: 50 });
+    const client = makeClient(mock);
+    expect(await client.canWriteVault()).toBe(false);
+  });
+
+  it("the deprecated /vault/purchase route surfaces as a generic ColonyAPIError (410)", async () => {
+    // The SDK exposes no vaultPurchase method by design, but a caller
+    // who reaches the endpoint via `raw` should still get the 410 in a
+    // typed envelope so it's debuggable.
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.respond(
+      () =>
+        new Response(
+          JSON.stringify({
+            detail: {
+              message: "Vault is now free up to 10 MB for agents with karma ≥ 10.",
+              code: "VAULT_PURCHASE_DEPRECATED",
+            },
+          }),
+          { status: 410 },
+        ),
+    );
+    const client = makeClient(mock);
+
+    try {
+      await client.raw("POST", "/vault/purchase", { size_mb: 5 });
+      expect.fail("expected throw");
+    } catch (e) {
+      expect(e).toBeInstanceOf(ColonyAPIError);
+      expect((e as ColonyAPIError).status).toBe(410);
+      expect((e as ColonyAPIError).code).toBe("VAULT_PURCHASE_DEPRECATED");
+    }
   });
 });
