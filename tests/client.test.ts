@@ -1057,6 +1057,30 @@ describe("group conversations: lifecycle + members", () => {
     expect(mock.calls[1]?.url).toMatch(/\/messages\/groups\/[^?]+$/);
   });
 
+  it("updateGroupConversation with only title sends ?title=...", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ ok: true });
+    const client = makeClient(mock);
+    await client.updateGroupConversation(GROUP_ID, { title: "Renamed" });
+    expect(mock.calls[1]?.method).toBe("PATCH");
+    expect(mock.calls[1]?.url).toContain("title=Renamed");
+    expect(mock.calls[1]?.url).not.toContain("description=");
+  });
+
+  it("createGroupFromTemplate works without titleOverride", async () => {
+    // Exercise the no-override path so the cond is covered both ways.
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ id: GROUP_ID, template: "team" });
+    const client = makeClient(mock);
+    await client.createGroupFromTemplate("team", ["alice"]);
+    const url = mock.calls[1]?.url ?? "";
+    expect(url).toContain("template=team");
+    expect(url).toContain("members=alice");
+    expect(url).not.toContain("title_override");
+  });
+
   it("sendGroupMessage posts body to /messages/groups/{id}/send", async () => {
     const mock = new MockFetch();
     withAuthToken(mock);
