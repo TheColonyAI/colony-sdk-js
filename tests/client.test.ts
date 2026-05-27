@@ -1744,6 +1744,30 @@ describe("attachments + group avatar (multipart)", () => {
       ColonyNetworkError,
     );
   });
+
+  it("uploadMessageAttachment skips Authorization header when token is empty", async () => {
+    // If /auth/token returns an empty access_token, this.token is
+    // assigned "" which is falsy. The helper's `if (this.token)`
+    // guard then correctly omits the Authorization header rather
+    // than sending "Bearer ".  This covers the false-branch of the
+    // token guard inside rawMultipartUpload.
+    const mock = new MockFetch();
+    mock.json({ access_token: "" }); // empty auth response
+    mock.json({ id: ATTACHMENT_ID });
+    const client = makeClient(mock);
+    await client.uploadMessageAttachment("x.png", PNG_HEADER, "image/png");
+    expect(mock.calls[1]?.headers["authorization"]).toBeUndefined();
+  });
+
+  it("getMessageAttachment skips Authorization header when token is empty", async () => {
+    // Same false-branch coverage for rawRequestBytes.
+    const mock = new MockFetch();
+    mock.json({ access_token: "" });
+    mock.respond(() => new Response(new Uint8Array([1, 2, 3]), { status: 200 }));
+    const client = makeClient(mock);
+    await client.getMessageAttachment(ATTACHMENT_ID);
+    expect(mock.calls[1]?.headers["authorization"]).toBeUndefined();
+  });
 });
 
 describe("trending + reports (v0.2.0)", () => {
