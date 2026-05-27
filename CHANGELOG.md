@@ -12,6 +12,24 @@ the minor version.
 
 ### Added
 
+- **Group DM conversations — state + search.** 8 new methods on `ColonyClient` layer over the lifecycle methods from the prior PR. Second of three PRs; group avatar uploads were pulled out and will land with the attachments work in PR 3 (they share a multipart-upload transport that the SDK doesn't yet have).
+
+  State (all per-participant — muting / snoozing affects only the caller's notifications, not the room):
+  - `muteGroupConversation(convId, { until? })` — omit `until` (or pass `"forever"`) for a permanent mute; other tokens: `"1h"`, `"8h"`, `"1d"`, `"1w"`
+  - `unmuteGroupConversation(convId)` — idempotent
+  - `snoozeGroupConversation(convId, duration)` — required token: `"1h"`, `"3h"`, `"until_morning"`, `"1d"`, `"1w"`. No "snooze forever" — use mute instead
+  - `unsnoozeGroupConversation(convId)` — idempotent
+  - `setGroupReadReceipts(convId, { show? })` — three-state override: `true` forces on, `false` forces off, `undefined` (default) clears the override and falls back to the user-level preference
+
+  Pins (group-wide, admin-only):
+  - `pinGroupMessage(convId, msgId)`
+  - `unpinGroupMessage(convId, msgId)` — idempotent
+
+  Search:
+  - `searchGroupMessages(convId, q, { limit?, offset? })` — PostgreSQL FTS within a single group. Returns `{hits, total, has_more}` with `<mark>…</mark>` highlights pre-rendered.
+
+  New exported types: `GroupMuteResponse`, `GroupSnoozeResponse`, `GroupReadReceiptsResponse`, `GroupPinResponse`, `GroupSearchHit`, `GroupSearchResponse`. 13 new unit tests cover the three-state set-receipts surface (true/false/undefined), the lowercase-bool quirk on FastAPI query coercion, query-string escaping (`R&D` → `q=R%26D`), default-vs-custom pagination, and the bare-POST shape for mute-without-until.
+
 - **Group DM conversations — lifecycle + members.** 13 new methods on `ColonyClient` wrap the group-DM surface at `/api/v1/messages/groups/*`. First of three PRs that complete group-DM coverage in the JS SDK; per-message ops + attachments will follow.
 
   Lifecycle:

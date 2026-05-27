@@ -22,6 +22,11 @@ import type {
   GroupConversationDetail,
   GroupInviteResponse,
   GroupMembersResponse,
+  GroupMuteResponse,
+  GroupPinResponse,
+  GroupReadReceiptsResponse,
+  GroupSearchResponse,
+  GroupSnoozeResponse,
   GroupTemplatesResponse,
   JsonObject,
   MarkGroupReadResponse,
@@ -1182,6 +1187,173 @@ export class ColonyClient {
       method: "POST",
       path: `/messages/groups/${convId}/read-all`,
       signal: options?.signal,
+    });
+  }
+
+  // ── Group conversations: state + search ──────────────────────────
+  //
+  // Per-participant state (mute / snooze / receipts), per-message
+  // state (pin), and within-group search. Mute / snooze / receipts
+  // are scoped to the caller's row in `conversation_participants` —
+  // muting a group only silences notifications for *you*, never the
+  // whole room. Pins are the exception: they're group-wide and
+  // admin-only.
+
+  /**
+   * Mute a group conversation for the caller.
+   *
+   * @param convId The group's UUID.
+   * @param options `until` is an optional duration token:
+   *   `"1h"`, `"8h"`, `"1d"`, `"1w"`, or `"forever"`. Omit (or pass
+   *   `"forever"`) for a permanent mute. Same token set as
+   *   {@link muteConversation} for 1:1.
+   */
+  async muteGroupConversation(
+    convId: string,
+    options: { until?: string } & CallOptions = {},
+  ): Promise<GroupMuteResponse> {
+    const path =
+      options.until !== undefined
+        ? `/messages/groups/${convId}/mute?${new URLSearchParams({ until: options.until }).toString()}`
+        : `/messages/groups/${convId}/mute`;
+    return this.rawRequest<GroupMuteResponse>({
+      method: "POST",
+      path,
+      signal: options.signal,
+    });
+  }
+
+  /** Unmute a group conversation for the caller. Idempotent. */
+  async unmuteGroupConversation(convId: string, options?: CallOptions): Promise<GroupMuteResponse> {
+    return this.rawRequest<GroupMuteResponse>({
+      method: "POST",
+      path: `/messages/groups/${convId}/unmute`,
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Snooze a group conversation for the caller. Snoozed groups
+   * disappear from the default inbox until `snoozed_until` passes.
+   *
+   * @param convId The group's UUID.
+   * @param duration Required token: `"1h"`, `"3h"`, `"until_morning"`,
+   *   `"1d"`, `"1w"`. No "snooze forever" — use
+   *   {@link muteGroupConversation} instead for permanent suppression.
+   */
+  async snoozeGroupConversation(
+    convId: string,
+    duration: string,
+    options?: CallOptions,
+  ): Promise<GroupSnoozeResponse> {
+    const params = new URLSearchParams({ duration });
+    return this.rawRequest<GroupSnoozeResponse>({
+      method: "POST",
+      path: `/messages/groups/${convId}/snooze?${params.toString()}`,
+      signal: options?.signal,
+    });
+  }
+
+  /** Clear the caller's snooze on a group. Idempotent. */
+  async unsnoozeGroupConversation(
+    convId: string,
+    options?: CallOptions,
+  ): Promise<GroupSnoozeResponse> {
+    return this.rawRequest<GroupSnoozeResponse>({
+      method: "POST",
+      path: `/messages/groups/${convId}/unsnooze`,
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Per-group read-receipt override.
+   *
+   * Three-state on `show`:
+   * - `true` — force receipts ON in this group regardless of the
+   *   user-level preference.
+   * - `false` — force receipts OFF here.
+   * - `undefined` (omitted) — clear the override; fall back to the
+   *   user-level `preferences.show_read_receipts`. Sends a PATCH
+   *   with **no** query string, distinct from `show: true` or
+   *   `show: false`.
+   */
+  async setGroupReadReceipts(
+    convId: string,
+    options: { show?: boolean } & CallOptions = {},
+  ): Promise<GroupReadReceiptsResponse> {
+    const path =
+      options.show !== undefined
+        ? // FastAPI bool coercion — must be the lowercase literal strings.
+          `/messages/groups/${convId}/receipts?${new URLSearchParams({
+            show: options.show ? "true" : "false",
+          }).toString()}`
+        : `/messages/groups/${convId}/receipts`;
+    return this.rawRequest<GroupReadReceiptsResponse>({
+      method: "PATCH",
+      path,
+      signal: options.signal,
+    });
+  }
+
+  /**
+   * Pin a message in a group. Admin-only.
+   *
+   * Pins are group-wide — every member sees the pinned message
+   * surfaced at the top of the conversation.
+   */
+  async pinGroupMessage(
+    convId: string,
+    msgId: string,
+    options?: CallOptions,
+  ): Promise<GroupPinResponse> {
+    return this.rawRequest<GroupPinResponse>({
+      method: "POST",
+      path: `/messages/groups/${convId}/messages/${msgId}/pin`,
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Unpin a previously-pinned message in a group. Admin-only.
+   * Idempotent — unpinning an already-unpinned message returns the
+   * same `{pinned: false, ...}` shape rather than 404.
+   */
+  async unpinGroupMessage(
+    convId: string,
+    msgId: string,
+    options?: CallOptions,
+  ): Promise<GroupPinResponse> {
+    return this.rawRequest<GroupPinResponse>({
+      method: "DELETE",
+      path: `/messages/groups/${convId}/messages/${msgId}/pin`,
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Full-text search inside a single group conversation.
+   *
+   * @param convId The group's UUID. Caller must be a member.
+   * @param q Search text. Minimum 2 characters (server-enforced),
+   *   max 200. PostgreSQL FTS with `simple` configuration —
+   *   stemming-free, case-insensitive.
+   * @param options `limit` (1..100, default 50) and `offset`.
+   */
+  async searchGroupMessages(
+    convId: string,
+    q: string,
+    options: { limit?: number; offset?: number } & CallOptions = {},
+  ): Promise<GroupSearchResponse> {
+    const params = new URLSearchParams({
+      q,
+      limit: String(options.limit ?? 50),
+      offset: String(options.offset ?? 0),
+    });
+    return this.rawRequest<GroupSearchResponse>({
+      method: "GET",
+      path: `/messages/groups/${convId}/search?${params.toString()}`,
+      signal: options.signal,
     });
   }
 
