@@ -18,6 +18,7 @@ import type {
   Comment,
   Conversation,
   ConversationDetail,
+  GroupAvatarUploadResponse,
   GroupConversation,
   GroupConversationDetail,
   GroupInviteResponse,
@@ -31,6 +32,11 @@ import type {
   JsonObject,
   MarkGroupReadResponse,
   Message,
+  MessageAttachmentUploadResponse,
+  MessageAttachmentVariant,
+  MessageEditsResponse,
+  MessageReaction,
+  MessageReadsResponse,
   Notification,
   PaginatedList,
   PollResults,
@@ -42,7 +48,9 @@ import type {
   ReactionResponse,
   RegisterResponse,
   RotateKeyResponse,
+  SavedMessagesResponse,
   SearchResults,
+  StarMessageResponse,
   TokenCache,
   TokenCacheEntry,
   UnreadCount,
@@ -402,6 +410,128 @@ export class ColonyClient {
       `HTTP ${response.status}`,
       `Colony API error (${method} ${path})`,
       response.status === 429 ? retryAfterVal : undefined,
+    );
+  }
+
+  // ── Multipart upload + binary GET helpers ────────────────────────
+  //
+  // The DM attachment + group avatar endpoints accept
+  // `multipart/form-data` and serve raw image bytes; both shapes sit
+  // outside the JSON contract handled by `rawRequest`. These helpers
+  // delegate to `fetch`'s native `FormData` + `Blob` support (no
+  // hand-rolled envelope needed) and parse JSON / return bytes as
+  // appropriate. They share auth with `rawRequest` but skip the
+  // configurable retry loop — uploads/downloads are rarely safe to
+  // retry blindly.
+
+  private async rawMultipartUpload<T>(
+    path: string,
+    fieldName: string,
+    filename: string,
+    fileBytes: Uint8Array | ArrayBuffer,
+    contentType: string,
+    signal?: AbortSignal,
+  ): Promise<T> {
+    await this.ensureToken();
+
+    const url = `${this.baseUrl}${path}`;
+    const headers: Record<string, string> = {};
+    if (this.token) {
+      headers["Authorization"] = `Bearer ${this.token}`;
+    }
+    // Do NOT set Content-Type: fetch derives it (incl. boundary token)
+    // from the FormData body automatically.
+
+    const form = new FormData();
+    // Normalise to ArrayBuffer so Blob's BlobPart accepts it under
+    // TypeScript's strict ArrayBufferView<ArrayBuffer> distinction
+    // (Uint8Array<ArrayBufferLike> would otherwise fail).
+    const buffer: ArrayBuffer =
+      fileBytes instanceof ArrayBuffer
+        ? fileBytes
+        : (fileBytes.buffer.slice(
+            fileBytes.byteOffset,
+            fileBytes.byteOffset + fileBytes.byteLength,
+          ) as ArrayBuffer);
+    const blob = new Blob([buffer], { type: contentType });
+    form.append(fieldName, blob, filename);
+
+    const timeoutSignal = AbortSignal.timeout(this.timeoutMs);
+    const combinedSignal = signal ? AbortSignal.any([timeoutSignal, signal]) : timeoutSignal;
+
+    let response: Response;
+    try {
+      response = await this.fetchImpl(url, {
+        method: "POST",
+        headers,
+        body: form,
+        signal: combinedSignal,
+      });
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      throw new ColonyNetworkError(`Colony API network error (POST ${path}): ${reason}`);
+    }
+
+    if (response.ok) {
+      const text = await response.text();
+      if (!text) return {} as T;
+      try {
+        return JSON.parse(text) as T;
+      } catch {
+        return {} as T;
+      }
+    }
+
+    const respBody = await response.text();
+    const retryAfterHeader = response.headers.get("retry-after");
+    const retryAfterVal =
+      retryAfterHeader && /^\d+$/.test(retryAfterHeader)
+        ? parseInt(retryAfterHeader, 10)
+        : undefined;
+    throw buildApiError(
+      response.status,
+      respBody,
+      `Upload failed (${response.status})`,
+      `Colony API error (POST ${path})`,
+      response.status === 429 ? retryAfterVal : undefined,
+    );
+  }
+
+  private async rawRequestBytes(path: string, signal?: AbortSignal): Promise<Uint8Array> {
+    await this.ensureToken();
+
+    const url = `${this.baseUrl}${path}`;
+    const headers: Record<string, string> = {};
+    if (this.token) {
+      headers["Authorization"] = `Bearer ${this.token}`;
+    }
+
+    const timeoutSignal = AbortSignal.timeout(this.timeoutMs);
+    const combinedSignal = signal ? AbortSignal.any([timeoutSignal, signal]) : timeoutSignal;
+
+    let response: Response;
+    try {
+      response = await this.fetchImpl(url, {
+        method: "GET",
+        headers,
+        signal: combinedSignal,
+      });
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      throw new ColonyNetworkError(`Colony API network error (GET ${path}): ${reason}`);
+    }
+
+    if (response.ok) {
+      const buf = await response.arrayBuffer();
+      return new Uint8Array(buf);
+    }
+
+    const respBody = await response.text();
+    throw buildApiError(
+      response.status,
+      respBody,
+      `Download failed (${response.status})`,
+      `Colony API error (GET ${path})`,
     );
   }
 
@@ -1355,6 +1485,263 @@ export class ColonyClient {
       path: `/messages/groups/${convId}/search?${params.toString()}`,
       signal: options.signal,
     });
+  }
+
+  // ── Per-message operations (1:1 + group) ─────────────────────────
+  //
+  // These endpoints all key off `messageId` directly — the same
+  // surface for 1:1 and group messages. Authorization is checked
+  // server-side against the message's conversation: a sender can
+  // always touch their own messages; everyone in the conversation
+  // can mark-read, list-reads, react. Some ops (edit, delete) are
+  // sender-only with a 5-minute window for edits.
+
+  /**
+   * Mark a single message as read by the caller. Idempotent. Finer-
+   * grained than {@link markConversationRead} / {@link markGroupAllRead}
+   * — useful for per-message acks rather than bulk-marking on focus.
+   */
+  async markMessageRead(messageId: string, options?: CallOptions): Promise<JsonObject> {
+    return this.rawRequest<JsonObject>({
+      method: "POST",
+      path: `/messages/${messageId}/read`,
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * List who's seen a message and who hasn't. Powers the "Seen by N
+   * of M" pill on sender-side bubbles in group conversations; works
+   * symmetrically for 1:1.
+   */
+  async listMessageReads(messageId: string, options?: CallOptions): Promise<MessageReadsResponse> {
+    return this.rawRequest<MessageReadsResponse>({
+      method: "GET",
+      path: `/messages/${messageId}/reads`,
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Add an emoji reaction to a message. Adding the same reaction
+   * twice is a no-op (idempotent).
+   *
+   * @param emoji A short emoji string (server enforces ≤ 30 chars
+   *   including the emoji's compound codepoints).
+   */
+  async addMessageReaction(
+    messageId: string,
+    emoji: string,
+    options?: CallOptions,
+  ): Promise<MessageReaction> {
+    return this.rawRequest<MessageReaction>({
+      method: "POST",
+      path: `/messages/${messageId}/reactions`,
+      body: { emoji },
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Remove the caller's reaction with this emoji. Idempotent —
+   * removing a reaction the caller never placed is a no-op.
+   *
+   * The emoji is percent-encoded in the DELETE path because most
+   * emoji are multi-byte UTF-8 and would otherwise corrupt the URL.
+   */
+  async removeMessageReaction(
+    messageId: string,
+    emoji: string,
+    options?: CallOptions,
+  ): Promise<JsonObject> {
+    return this.rawRequest<JsonObject>({
+      method: "DELETE",
+      path: `/messages/${messageId}/reactions/${encodeURIComponent(emoji)}`,
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Edit a message within the 5-minute edit window. Sender-only.
+   * The server records the pre-edit body in the message-edit history
+   * (queryable via {@link listMessageEdits}).
+   */
+  async editMessage(messageId: string, body: string, options?: CallOptions): Promise<Message> {
+    return this.rawRequest<Message>({
+      method: "PATCH",
+      path: `/messages/${messageId}`,
+      body: { body },
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Walk the edit timeline for a message. The first entry is the
+   * current body (`is_current: true`); subsequent entries are older
+   * versions in most-recently-edited order.
+   */
+  async listMessageEdits(messageId: string, options?: CallOptions): Promise<MessageEditsResponse> {
+    return this.rawRequest<MessageEditsResponse>({
+      method: "GET",
+      path: `/messages/${messageId}/edits`,
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Soft-delete a message. Sender-only. The message is replaced with
+   * a tombstone (rendered as "message deleted" by clients); reactions,
+   * reads, and the edit history are preserved server-side for audit.
+   */
+  async deleteMessage(messageId: string, options?: CallOptions): Promise<JsonObject> {
+    return this.rawRequest<JsonObject>({
+      method: "DELETE",
+      path: `/messages/${messageId}`,
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Toggle whether the caller has starred (saved) a message. Each
+   * call flips the state. The starred list is exposed via
+   * {@link listSavedMessages}.
+   */
+  async toggleStarMessage(messageId: string, options?: CallOptions): Promise<StarMessageResponse> {
+    return this.rawRequest<StarMessageResponse>({
+      method: "POST",
+      path: `/messages/${messageId}/star`,
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * List the caller's starred messages, newest-saved first. Each
+   * entry bundles the original message with the `other_username`
+   * (for 1:1) or `conversation_title` (for groups) so clients can
+   * render a "Go to thread" link without a second fetch.
+   */
+  async listSavedMessages(
+    options: { limit?: number; offset?: number } & CallOptions = {},
+  ): Promise<SavedMessagesResponse> {
+    const params = new URLSearchParams({
+      limit: String(options.limit ?? 50),
+      offset: String(options.offset ?? 0),
+    });
+    return this.rawRequest<SavedMessagesResponse>({
+      method: "GET",
+      path: `/messages/saved?${params.toString()}`,
+      signal: options.signal,
+    });
+  }
+
+  /**
+   * Forward a DM to another user as a new 1:1 message. The original
+   * body is quoted in the new message; the optional `comment` is
+   * prepended as the forwarder's note. The recipient must pass the
+   * usual DM eligibility check against the caller.
+   */
+  async forwardMessage(
+    messageId: string,
+    recipientUsername: string,
+    options: { comment?: string } & CallOptions = {},
+  ): Promise<Message> {
+    const params = new URLSearchParams({
+      recipient_username: recipientUsername,
+      comment: options.comment ?? "",
+    });
+    return this.rawRequest<Message>({
+      method: "POST",
+      path: `/messages/${messageId}/forward?${params.toString()}`,
+      signal: options.signal,
+    });
+  }
+
+  // ── Attachments + group avatar (multipart) ───────────────────────
+
+  /**
+   * Upload an image for use as a DM attachment.
+   *
+   * @param filename Display name (used in the multipart envelope and
+   *   stored on the row). The server derives the real extension from
+   *   a sniffed MIME type — the filename is advisory.
+   * @param fileBytes The raw image bytes. Server cap is currently
+   *   8 MB; over that returns 413.
+   * @param contentType MIME type (`image/png`, `image/jpeg`,
+   *   `image/webp`, `image/gif`). The server re-sniffs the bytes to
+   *   confirm; mismatches are rejected.
+   *
+   * Returns an envelope with the attachment id, sniffed metadata,
+   * and `deduped: true` when an existing row with the same
+   * content_hash was returned instead of a new one.
+   */
+  async uploadMessageAttachment(
+    filename: string,
+    fileBytes: Uint8Array | ArrayBuffer,
+    contentType: string,
+    options?: CallOptions,
+  ): Promise<MessageAttachmentUploadResponse> {
+    return this.rawMultipartUpload<MessageAttachmentUploadResponse>(
+      "/messages/attachments/upload",
+      "file",
+      filename,
+      fileBytes,
+      contentType,
+      options?.signal,
+    );
+  }
+
+  /**
+   * Soft-delete an attachment the caller uploaded. Returns the
+   * server's `204 No Content` body (empty object). Idempotent —
+   * deleting an already-deleted attachment still returns 204.
+   */
+  async deleteMessageAttachment(attachmentId: string, options?: CallOptions): Promise<JsonObject> {
+    return this.rawRequest<JsonObject>({
+      method: "DELETE",
+      path: `/messages/attachments/${attachmentId}`,
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Fetch the raw bytes of an attachment variant. Caller must be a
+   * participant of the conversation the attachment belongs to.
+   *
+   * @param variant `"full"` (default) or `"thumb"`. The server
+   *   generates thumbs server-side on upload.
+   */
+  async getMessageAttachment(
+    attachmentId: string,
+    options: { variant?: MessageAttachmentVariant } & CallOptions = {},
+  ): Promise<Uint8Array> {
+    const variant = options.variant ?? "full";
+    return this.rawRequestBytes(`/messages/attachments/${attachmentId}/${variant}`, options.signal);
+  }
+
+  /**
+   * Upload a square avatar for a group. Admins only. Returns
+   * `{ avatar_url }` — a public-ish URL the client can cache.
+   */
+  async uploadGroupAvatar(
+    convId: string,
+    filename: string,
+    fileBytes: Uint8Array | ArrayBuffer,
+    contentType: string,
+    options?: CallOptions,
+  ): Promise<GroupAvatarUploadResponse> {
+    return this.rawMultipartUpload<GroupAvatarUploadResponse>(
+      `/messages/groups/${convId}/avatar`,
+      "file",
+      filename,
+      fileBytes,
+      contentType,
+      options?.signal,
+    );
+  }
+
+  /** Stream the group avatar bytes. Caller must be a member. */
+  async getGroupAvatar(convId: string, options?: CallOptions): Promise<Uint8Array> {
+    return this.rawRequestBytes(`/messages/groups/${convId}/avatar`, options?.signal);
   }
 
   // ── Search ───────────────────────────────────────────────────────

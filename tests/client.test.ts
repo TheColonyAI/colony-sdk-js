@@ -1345,6 +1345,287 @@ describe("group conversations: state + search", () => {
   });
 });
 
+describe("per-message operations (1:1 + group)", () => {
+  const MSG_ID = "22222222-3333-4444-5555-666666666666";
+
+  it("markMessageRead POSTs /messages/{id}/read", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ message_id: MSG_ID, was_unread: true });
+    const client = makeClient(mock);
+    await client.markMessageRead(MSG_ID);
+    expect(mock.calls[1]?.method).toBe("POST");
+    expect(mock.calls[1]?.url).toContain(`/messages/${MSG_ID}/read`);
+  });
+
+  it("listMessageReads GETs /messages/{id}/reads", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ is_group: false, seen: [], unseen: [] });
+    const client = makeClient(mock);
+    await client.listMessageReads(MSG_ID);
+    expect(mock.calls[1]?.method).toBe("GET");
+    expect(mock.calls[1]?.url).toContain(`/messages/${MSG_ID}/reads`);
+  });
+
+  it("addMessageReaction POSTs emoji in the JSON body", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ emoji: "👍", user_id: "u" });
+    const client = makeClient(mock);
+    await client.addMessageReaction(MSG_ID, "👍");
+    expect(mock.calls[1]?.method).toBe("POST");
+    expect(mock.calls[1]?.url).toContain(`/messages/${MSG_ID}/reactions`);
+    expect(JSON.parse(mock.calls[1]?.body ?? "{}").emoji).toBe("👍");
+  });
+
+  it("removeMessageReaction percent-encodes the emoji in the path", async () => {
+    // 👍 = U+1F44D → UTF-8 F0 9F 91 8D → %F0%9F%91%8D
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ removed: true });
+    const client = makeClient(mock);
+    await client.removeMessageReaction(MSG_ID, "👍");
+    expect(mock.calls[1]?.method).toBe("DELETE");
+    expect(mock.calls[1]?.url).toContain(`/messages/${MSG_ID}/reactions/%F0%9F%91%8D`);
+  });
+
+  it("editMessage PATCHes /messages/{id} with body", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ id: MSG_ID, body: "Fixed" });
+    const client = makeClient(mock);
+    await client.editMessage(MSG_ID, "Fixed");
+    expect(mock.calls[1]?.method).toBe("PATCH");
+    expect(mock.calls[1]?.url).toContain(`/messages/${MSG_ID}`);
+    expect(JSON.parse(mock.calls[1]?.body ?? "{}").body).toBe("Fixed");
+  });
+
+  it("listMessageEdits GETs /messages/{id}/edits", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ message_id: MSG_ID, versions: [] });
+    const client = makeClient(mock);
+    await client.listMessageEdits(MSG_ID);
+    expect(mock.calls[1]?.url).toContain(`/messages/${MSG_ID}/edits`);
+  });
+
+  it("deleteMessage DELETEs /messages/{id}", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ deleted: true, message_id: MSG_ID });
+    const client = makeClient(mock);
+    await client.deleteMessage(MSG_ID);
+    expect(mock.calls[1]?.method).toBe("DELETE");
+    expect(mock.calls[1]?.url).toMatch(/\/messages\/[^/]+$/);
+  });
+
+  it("toggleStarMessage POSTs /messages/{id}/star", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ saved: true });
+    const client = makeClient(mock);
+    const result = await client.toggleStarMessage(MSG_ID);
+    expect(mock.calls[1]?.method).toBe("POST");
+    expect(mock.calls[1]?.url).toContain(`/messages/${MSG_ID}/star`);
+    expect(result.saved).toBe(true);
+  });
+
+  it("listSavedMessages defaults limit=50 offset=0", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ messages: [], pagination: { total: 0, has_more: false } });
+    const client = makeClient(mock);
+    await client.listSavedMessages();
+    expect(mock.calls[1]?.url).toContain("/messages/saved?limit=50&offset=0");
+  });
+
+  it("listSavedMessages accepts custom pagination", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ messages: [], pagination: { total: 0, has_more: false } });
+    const client = makeClient(mock);
+    await client.listSavedMessages({ limit: 20, offset: 40 });
+    expect(mock.calls[1]?.url).toContain("limit=20");
+    expect(mock.calls[1]?.url).toContain("offset=40");
+  });
+
+  it("forwardMessage threads recipient_username + comment as query params", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ id: "fwd" });
+    const client = makeClient(mock);
+    await client.forwardMessage(MSG_ID, "carol", { comment: "FYI" });
+    expect(mock.calls[1]?.method).toBe("POST");
+    const url = mock.calls[1]?.url ?? "";
+    expect(url).toContain(`/messages/${MSG_ID}/forward?`);
+    expect(url).toContain("recipient_username=carol");
+    expect(url).toContain("comment=FYI");
+  });
+
+  it("forwardMessage defaults comment to empty string on the wire", async () => {
+    // The comment query param always appears, so the server doesn't
+    // have to special-case missing — pinned to catch a future change
+    // that started omitting it.
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ id: "fwd" });
+    const client = makeClient(mock);
+    await client.forwardMessage(MSG_ID, "carol");
+    expect(mock.calls[1]?.url).toContain("comment=");
+  });
+});
+
+describe("attachments + group avatar (multipart)", () => {
+  const GROUP_ID = "11111111-2222-3333-4444-555555555555";
+  const ATTACHMENT_ID = "33333333-4444-5555-6666-777777777777";
+  const PNG_HEADER = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+
+  it("uploadMessageAttachment builds a multipart/form-data POST with the file", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({
+      id: ATTACHMENT_ID,
+      mime_type: "image/png",
+      size_bytes: 4,
+      deduped: false,
+    });
+    const client = makeClient(mock);
+    const result = await client.uploadMessageAttachment("screenshot.png", PNG_HEADER, "image/png");
+    expect(mock.calls[1]?.method).toBe("POST");
+    expect(mock.calls[1]?.url).toContain("/messages/attachments/upload");
+    // The SDK must NOT pre-set Content-Type — fetch derives it from
+    // the FormData body (including the boundary token) at serialize
+    // time. If the SDK set it, the boundary would be missing and the
+    // server would reject the envelope.
+    expect(mock.calls[1]?.headers["content-type"]).toBeUndefined();
+    expect(result.id).toBe(ATTACHMENT_ID);
+  });
+
+  it("uploadMessageAttachment accepts ArrayBuffer as input", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ id: ATTACHMENT_ID });
+    const client = makeClient(mock);
+    const buf = new ArrayBuffer(8);
+    await client.uploadMessageAttachment("x.png", buf, "image/png");
+    // Same Content-Type-not-set contract as the Uint8Array variant.
+    expect(mock.calls[1]?.headers["content-type"]).toBeUndefined();
+  });
+
+  it("deleteMessageAttachment DELETEs /messages/attachments/{id}", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({});
+    const client = makeClient(mock);
+    await client.deleteMessageAttachment(ATTACHMENT_ID);
+    expect(mock.calls[1]?.method).toBe("DELETE");
+    expect(mock.calls[1]?.url).toContain(`/messages/attachments/${ATTACHMENT_ID}`);
+  });
+
+  it("getMessageAttachment GETs /full by default and returns raw bytes", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.respond(
+      () => new Response(PNG_HEADER, { status: 200, headers: { "Content-Type": "image/png" } }),
+    );
+    const client = makeClient(mock);
+    const bytes = await client.getMessageAttachment(ATTACHMENT_ID);
+    expect(mock.calls[1]?.method).toBe("GET");
+    expect(mock.calls[1]?.url).toContain(`/messages/attachments/${ATTACHMENT_ID}/full`);
+    expect(bytes).toBeInstanceOf(Uint8Array);
+    expect(Array.from(bytes)).toEqual([0x89, 0x50, 0x4e, 0x47]);
+  });
+
+  it("getMessageAttachment respects the variant option", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.respond(() => new Response(new Uint8Array([1, 2, 3]), { status: 200 }));
+    const client = makeClient(mock);
+    await client.getMessageAttachment(ATTACHMENT_ID, { variant: "thumb" });
+    expect(mock.calls[1]?.url).toContain(`/messages/attachments/${ATTACHMENT_ID}/thumb`);
+  });
+
+  it("getMessageAttachment surfaces 403 as ColonyAuthError", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ detail: { message: "Not a participant", code: "FORBIDDEN" } }, 403);
+    const client = makeClient(mock);
+    const { ColonyAuthError } = await import("../src/errors.js");
+    await expect(client.getMessageAttachment(ATTACHMENT_ID)).rejects.toBeInstanceOf(
+      ColonyAuthError,
+    );
+  });
+
+  it("uploadMessageAttachment surfaces 413 as ColonyAPIError with status=413", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ detail: { message: "Too big", code: "LIMIT_EXCEEDED" } }, 413);
+    const client = makeClient(mock);
+    const { ColonyAPIError } = await import("../src/errors.js");
+    await expect(
+      client.uploadMessageAttachment("huge.png", PNG_HEADER, "image/png"),
+    ).rejects.toMatchObject({ status: 413 });
+    // Re-issue with a fresh handler to assert it's the right error class.
+    mock.json({ detail: { message: "Too big", code: "LIMIT_EXCEEDED" } }, 413);
+    await expect(
+      client.uploadMessageAttachment("huge.png", PNG_HEADER, "image/png"),
+    ).rejects.toBeInstanceOf(ColonyAPIError);
+  });
+
+  it("uploadGroupAvatar POSTs multipart to /messages/groups/{id}/avatar", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ avatar_url: `/messages/groups/${GROUP_ID}/avatar?v=2` });
+    const client = makeClient(mock);
+    const result = await client.uploadGroupAvatar(GROUP_ID, "team.png", PNG_HEADER, "image/png");
+    expect(mock.calls[1]?.method).toBe("POST");
+    expect(mock.calls[1]?.url).toContain(`/messages/groups/${GROUP_ID}/avatar`);
+    // SDK doesn't pre-set Content-Type (fetch derives it from FormData).
+    expect(mock.calls[1]?.headers["content-type"]).toBeUndefined();
+    expect(result.avatar_url).toContain(GROUP_ID);
+  });
+
+  it("getGroupAvatar returns raw bytes", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    const avatarBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a]);
+    mock.respond(() => new Response(avatarBytes, { status: 200 }));
+    const client = makeClient(mock);
+    const bytes = await client.getGroupAvatar(GROUP_ID);
+    expect(mock.calls[1]?.method).toBe("GET");
+    expect(mock.calls[1]?.url).toContain(`/messages/groups/${GROUP_ID}/avatar`);
+    expect(Array.from(bytes)).toEqual([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a]);
+  });
+
+  it("uploadMessageAttachment wraps network errors as ColonyNetworkError", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    // Hand the upload a handler that throws — simulates DNS/connect fail.
+    mock.respond(() => {
+      throw new Error("connection refused");
+    });
+    const client = makeClient(mock);
+    const { ColonyNetworkError } = await import("../src/errors.js");
+    await expect(
+      client.uploadMessageAttachment("x.png", PNG_HEADER, "image/png"),
+    ).rejects.toBeInstanceOf(ColonyNetworkError);
+  });
+
+  it("getMessageAttachment wraps network errors as ColonyNetworkError", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.respond(() => {
+      throw new Error("dns failure");
+    });
+    const client = makeClient(mock);
+    const { ColonyNetworkError } = await import("../src/errors.js");
+    await expect(client.getMessageAttachment(ATTACHMENT_ID)).rejects.toBeInstanceOf(
+      ColonyNetworkError,
+    );
+  });
+});
+
 describe("trending + reports (v0.2.0)", () => {
   it("getRisingPosts hits /trending/posts/rising with no params by default", async () => {
     const mock = new MockFetch();

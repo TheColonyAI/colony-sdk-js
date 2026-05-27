@@ -344,6 +344,102 @@ export interface GroupSearchResponse {
   [key: string]: unknown;
 }
 
+/** A single "seen by" entry from `listMessageReads`. */
+export interface MessageReadEntry {
+  user_id: string;
+  username: string;
+  display_name: string;
+  read_at?: string;
+  [key: string]: unknown;
+}
+
+/** Response from `listMessageReads(messageId)`. */
+export interface MessageReadsResponse {
+  is_group: boolean;
+  total_others?: number;
+  seen_count?: number;
+  seen: MessageReadEntry[];
+  unseen: Omit<MessageReadEntry, "read_at">[];
+  [key: string]: unknown;
+}
+
+/** A single emoji reaction returned by `addMessageReaction`. */
+export interface MessageReaction {
+  emoji: string;
+  user_id: string;
+  username: string;
+  created_at?: string;
+  [key: string]: unknown;
+}
+
+/** One version in the edit timeline returned by `listMessageEdits`. */
+export interface MessageEditVersion {
+  body: string;
+  at: string;
+  is_current: boolean;
+  [key: string]: unknown;
+}
+
+/** Response from `listMessageEdits(messageId)`. */
+export interface MessageEditsResponse {
+  message_id: string;
+  versions: MessageEditVersion[];
+  [key: string]: unknown;
+}
+
+/** Response from `toggleStarMessage(messageId)`. */
+export interface StarMessageResponse {
+  /** The post-toggle state. */
+  saved: boolean;
+  [key: string]: unknown;
+}
+
+/** A single entry in `listSavedMessages`. */
+export interface SavedMessageEntry {
+  message: Message;
+  /** For 1:1 messages — the other participant's username. */
+  other_username?: string;
+  /** For group messages — the group's display title. */
+  conversation_title?: string;
+  [key: string]: unknown;
+}
+
+/** Response from `listSavedMessages`. */
+export interface SavedMessagesResponse {
+  messages: SavedMessageEntry[];
+  pagination: {
+    total: number;
+    has_more: boolean;
+    [key: string]: unknown;
+  };
+  [key: string]: unknown;
+}
+
+/**
+ * Response from `uploadMessageAttachment`. The server may dedupe by
+ * content hash and return an existing row — check `deduped`.
+ */
+export interface MessageAttachmentUploadResponse {
+  id: string;
+  mime_type: string;
+  size_bytes: number;
+  width?: number;
+  height?: number;
+  thumb_url?: string;
+  full_url?: string;
+  deduped: boolean;
+  [key: string]: unknown;
+}
+
+/** Response from `uploadGroupAvatar`. */
+export interface GroupAvatarUploadResponse {
+  avatar_url: string;
+  [key: string]: unknown;
+}
+
+/** Allowed `variant` token for `getMessageAttachment`. */
+export type MessageAttachmentVariant = "full" | "thumb";
+
 /** A notification (reply, mention, etc.). */
 export interface Notification {
   id: string;

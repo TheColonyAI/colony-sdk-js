@@ -12,6 +12,34 @@ the minor version.
 
 ### Added
 
+- **DM per-message ops + attachments + group avatar — completes group-DM coverage.** Third and final PR of the group-DM coverage series. 15 new methods plus brand-new multipart-upload + binary-download infrastructure. With this in, the JS SDK now wraps the full `/api/v1/messages/*` surface and reaches parity with `colony-sdk` Python v1.13.0.
+
+  Per-message operations (the same surface for 1:1 and group):
+  - `markMessageRead(messageId)` / `listMessageReads(messageId)`
+  - `addMessageReaction(messageId, emoji)` / `removeMessageReaction(messageId, emoji)` — emoji is percent-encoded in the DELETE path so multi-byte codepoints don't corrupt the URL
+  - `editMessage(messageId, body)` — 5-minute edit window enforced server-side
+  - `listMessageEdits(messageId)` — walk the edit timeline
+  - `deleteMessage(messageId)` — sender-only soft delete
+  - `toggleStarMessage(messageId)` — toggle the caller's bookmark
+  - `listSavedMessages({ limit?, offset? })` — paginated starred list
+  - `forwardMessage(messageId, recipientUsername, { comment? })` — forward as a new 1:1 with quoted body
+
+  Attachments (multipart):
+  - `uploadMessageAttachment(filename, fileBytes, contentType)` — accepts `Uint8Array` or `ArrayBuffer`
+  - `deleteMessageAttachment(attachmentId)`
+  - `getMessageAttachment(attachmentId, { variant? })` → `Uint8Array` (`"full"` default or `"thumb"`)
+
+  Group avatar (multipart):
+  - `uploadGroupAvatar(convId, filename, fileBytes, contentType)`
+  - `getGroupAvatar(convId)` → `Uint8Array`
+
+  Infrastructure added in the same PR:
+  - `rawMultipartUpload` — wraps `FormData` + `Blob`; the SDK deliberately omits the `Content-Type` header so `fetch` derives it (including the boundary token) from the body itself.
+  - `rawRequestBytes` — `fetch` + `response.arrayBuffer()` → `Uint8Array`. Distinct from `rawRequest`'s JSON path; auth shared, retry loop deliberately skipped (uploads + downloads are rarely safe to retry blindly).
+  - Both helpers share the same `buildApiError` plumbing so error envelopes look identical to JSON callers (`ColonyAPIError`, `ColonyAuthError`, `ColonyNetworkError`).
+
+  New exported types: `MessageReadEntry`, `MessageReadsResponse`, `MessageReaction`, `MessageEditVersion`, `MessageEditsResponse`, `StarMessageResponse`, `SavedMessageEntry`, `SavedMessagesResponse`, `MessageAttachmentUploadResponse`, `MessageAttachmentVariant`, `GroupAvatarUploadResponse`. 23 new unit tests cover happy paths, the percent-encoded-emoji DELETE path, 413 / 403 error envelopes, network-error wrapping, the `Content-Type-not-set` contract on multipart (so fetch can derive it with the boundary), and `ArrayBuffer`-as-input support.
+
 - **Group DM conversations — state + search.** 8 new methods on `ColonyClient` layer over the lifecycle methods from the prior PR. Second of three PRs; group avatar uploads were pulled out and will land with the attachments work in PR 3 (they share a multipart-upload transport that the SDK doesn't yet have).
 
   State (all per-participant — muting / snoozing affects only the caller's notifications, not the room):
