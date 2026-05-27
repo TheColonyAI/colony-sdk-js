@@ -1624,6 +1624,126 @@ describe("attachments + group avatar (multipart)", () => {
       ColonyNetworkError,
     );
   });
+
+  it("uploadMessageAttachment returns {} on empty 200 body", async () => {
+    // Some endpoints respond with a 200 and an empty body; the
+    // multipart helper should fall through to an empty object rather
+    // than throw a JSON parse error.
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.respond(() => new Response("", { status: 200 }));
+    const client = makeClient(mock);
+    const result = await client.uploadMessageAttachment("x.png", PNG_HEADER, "image/png");
+    expect(result).toEqual({});
+  });
+
+  it("uploadMessageAttachment falls through to {} on non-JSON 200 body", async () => {
+    // Defensive parse — if the server returns malformed JSON, the
+    // helper should return an empty object rather than propagating
+    // a SyntaxError up the call stack.
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.respond(
+      () =>
+        new Response("not json at all", {
+          status: 200,
+          headers: { "Content-Type": "text/plain" },
+        }),
+    );
+    const client = makeClient(mock);
+    const result = await client.uploadMessageAttachment("x.png", PNG_HEADER, "image/png");
+    expect(result).toEqual({});
+  });
+
+  it("uploadMessageAttachment forwards Retry-After on 429", async () => {
+    // 429 + numeric Retry-After header should round-trip as the
+    // retryAfter field on ColonyRateLimitError. Pinned to catch a
+    // regression in either the header regex or the conditional
+    // assignment.
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.respond(
+      () =>
+        new Response(JSON.stringify({ detail: "slow down" }), {
+          status: 429,
+          headers: { "Retry-After": "42" },
+        }),
+    );
+    const client = makeClient(mock);
+    const { ColonyRateLimitError } = await import("../src/errors.js");
+    await expect(
+      client.uploadMessageAttachment("x.png", PNG_HEADER, "image/png"),
+    ).rejects.toMatchObject({ status: 429, retryAfter: 42 });
+    // And confirm the class for completeness.
+    mock.respond(
+      () =>
+        new Response(JSON.stringify({ detail: "slow down" }), {
+          status: 429,
+          headers: { "Retry-After": "42" },
+        }),
+    );
+    await expect(
+      client.uploadMessageAttachment("x.png", PNG_HEADER, "image/png"),
+    ).rejects.toBeInstanceOf(ColonyRateLimitError);
+  });
+
+  it("uploadMessageAttachment forwards a caller-supplied AbortSignal", async () => {
+    // Hits the `signal ? AbortSignal.any([...]) : timeoutSignal`
+    // branch — without this test only the no-caller-signal arm is
+    // exercised.
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ id: ATTACHMENT_ID });
+    const client = makeClient(mock);
+    const controller = new AbortController();
+    await client.uploadMessageAttachment("x.png", PNG_HEADER, "image/png", {
+      signal: controller.signal,
+    });
+    // No assertion needed beyond "didn't throw" — the goal is to
+    // exercise the conditional. The combined signal is built before
+    // fetch is called.
+    expect(mock.calls[1]?.method).toBe("POST");
+  });
+
+  it("getMessageAttachment forwards a caller-supplied AbortSignal", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.respond(() => new Response(new Uint8Array([1, 2, 3]), { status: 200 }));
+    const client = makeClient(mock);
+    const controller = new AbortController();
+    await client.getMessageAttachment(ATTACHMENT_ID, { signal: controller.signal });
+    expect(mock.calls[1]?.method).toBe("GET");
+  });
+
+  it("uploadMessageAttachment stringifies non-Error throws from fetch", async () => {
+    // If something throws a non-Error (string, number, plain object),
+    // the helper must fall through to String(err) rather than crash
+    // trying to read `.message`. Covers the `err instanceof Error`
+    // ternary's false branch.
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.respond(() => {
+      throw "raw string thrown by transport";
+    });
+    const client = makeClient(mock);
+    const { ColonyNetworkError } = await import("../src/errors.js");
+    await expect(
+      client.uploadMessageAttachment("x.png", PNG_HEADER, "image/png"),
+    ).rejects.toBeInstanceOf(ColonyNetworkError);
+  });
+
+  it("getMessageAttachment stringifies non-Error throws from fetch", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.respond(() => {
+      throw "raw string thrown by transport";
+    });
+    const client = makeClient(mock);
+    const { ColonyNetworkError } = await import("../src/errors.js");
+    await expect(client.getMessageAttachment(ATTACHMENT_ID)).rejects.toBeInstanceOf(
+      ColonyNetworkError,
+    );
+  });
 });
 
 describe("trending + reports (v0.2.0)", () => {
