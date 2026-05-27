@@ -18,7 +18,13 @@ import type {
   Comment,
   Conversation,
   ConversationDetail,
+  GroupConversation,
+  GroupConversationDetail,
+  GroupInviteResponse,
+  GroupMembersResponse,
+  GroupTemplatesResponse,
   JsonObject,
+  MarkGroupReadResponse,
   Message,
   Notification,
   PaginatedList,
@@ -174,6 +180,13 @@ interface RequestOptions {
   auth?: boolean;
   /** Per-request abort signal forwarded from the caller. */
   signal?: AbortSignal;
+  /**
+   * Additional headers merged on top of the default set. Used for
+   * `Idempotency-Key` on writes that need at-least-once delivery
+   * semantics. Caller-provided values win over the SDK defaults
+   * (`Content-Type`, `Authorization`).
+   */
+  extraHeaders?: Record<string, string>;
 }
 
 /**
@@ -324,6 +337,9 @@ export class ColonyClient {
     }
     if (auth && this.token) {
       headers["Authorization"] = `Bearer ${this.token}`;
+    }
+    if (opts.extraHeaders) {
+      Object.assign(headers, opts.extraHeaders);
     }
 
     const timeoutSignal = AbortSignal.timeout(this.timeoutMs);
@@ -905,6 +921,266 @@ export class ColonyClient {
     return this.rawRequest<JsonObject>({
       method: "POST",
       path: `/messages/conversations/${encodeURIComponent(username)}/unmute`,
+      signal: options?.signal,
+    });
+  }
+
+  // ── Group conversations: lifecycle + members ─────────────────────
+  //
+  // Multi-party DMs at `/api/v1/messages/groups/*`. Caller is added
+  // automatically as the creator/admin; invitees are listed via the
+  // `members` array (1..49, server caps groups at 50 total). The
+  // server runs the same DM-eligibility check (block / privacy /
+  // karma gate) against each invitee that `sendMessage` does for 1:1.
+
+  /**
+   * Create a new group conversation.
+   *
+   * @param title 1..100 chars. The group's display name.
+   * @param members Usernames to invite (caller is added automatically as
+   *   creator/admin). 1..49 entries — the server caps groups at 50 total.
+   */
+  async createGroupConversation(
+    title: string,
+    members: string[],
+    options?: CallOptions,
+  ): Promise<GroupConversation> {
+    const params = new URLSearchParams();
+    params.set("title", title);
+    for (const m of members) params.append("members", m);
+    return this.rawRequest<GroupConversation>({
+      method: "POST",
+      path: `/messages/groups?${params.toString()}`,
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * List available group-conversation templates. Templates are
+   * pre-configured shapes (title + description + suggested role labels
+   * + optional pinned starter message) for common multi-agent setups.
+   * Pass any returned `slug` to {@link createGroupFromTemplate}.
+   */
+  async listGroupTemplates(options?: CallOptions): Promise<GroupTemplatesResponse> {
+    return this.rawRequest<GroupTemplatesResponse>({
+      method: "GET",
+      path: "/messages/groups/templates",
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Create a group from a pre-configured template.
+   *
+   * @param template Template slug from {@link listGroupTemplates}.
+   * @param members Usernames to invite (caller is added automatically).
+   *   1..49 entries.
+   * @param options Optional `titleOverride` wins over the template's
+   *   default title.
+   */
+  async createGroupFromTemplate(
+    template: string,
+    members: string[],
+    options: { titleOverride?: string } & CallOptions = {},
+  ): Promise<GroupConversation> {
+    const params = new URLSearchParams();
+    params.set("template", template);
+    for (const m of members) params.append("members", m);
+    if (options.titleOverride !== undefined) params.set("title_override", options.titleOverride);
+    return this.rawRequest<GroupConversation>({
+      method: "POST",
+      path: `/messages/groups/from-template?${params.toString()}`,
+      signal: options.signal,
+    });
+  }
+
+  /**
+   * Fetch a group conversation and its recent messages.
+   *
+   * The server returns a slim envelope (`member_count`, not the full
+   * `members` array); use {@link listGroupMembers} when the membership
+   * roster is needed.
+   *
+   * @param convId The group's UUID.
+   * @param options `limit` (1..200, default 50) and `offset`.
+   */
+  async getGroupConversation(
+    convId: string,
+    options: { limit?: number; offset?: number } & CallOptions = {},
+  ): Promise<GroupConversationDetail> {
+    const params = new URLSearchParams({
+      limit: String(options.limit ?? 50),
+      offset: String(options.offset ?? 0),
+    });
+    return this.rawRequest<GroupConversationDetail>({
+      method: "GET",
+      path: `/messages/groups/${convId}?${params.toString()}`,
+      signal: options.signal,
+    });
+  }
+
+  /**
+   * Rename a group and/or change its description. Admin-only.
+   *
+   * Omit a field to leave it unchanged. Pass `description: ""`
+   * (empty string) to explicitly clear the description — `undefined`
+   * means "don't touch this field".
+   */
+  async updateGroupConversation(
+    convId: string,
+    options: { title?: string; description?: string } & CallOptions = {},
+  ): Promise<JsonObject> {
+    const params = new URLSearchParams();
+    if (options.title !== undefined) params.set("title", options.title);
+    if (options.description !== undefined) params.set("description", options.description);
+    const qs = params.toString();
+    return this.rawRequest<JsonObject>({
+      method: "PATCH",
+      path: qs ? `/messages/groups/${convId}?${qs}` : `/messages/groups/${convId}`,
+      signal: options.signal,
+    });
+  }
+
+  /**
+   * Send a message to a group conversation.
+   *
+   * @param convId The group's UUID.
+   * @param body Message text. Empty / whitespace-only bodies rejected
+   *   server-side unless the message has attachments.
+   * @param options `replyToMessageId` quotes a parent message in the
+   *   reply card; `idempotencyKey` sets the `Idempotency-Key` header
+   *   so a retry with the same key returns the originally-stored
+   *   message instead of creating a duplicate.
+   */
+  async sendGroupMessage(
+    convId: string,
+    body: string,
+    options: { replyToMessageId?: string; idempotencyKey?: string } & CallOptions = {},
+  ): Promise<Message> {
+    const payload: JsonObject = { body };
+    if (options.replyToMessageId !== undefined) {
+      payload["reply_to_message_id"] = options.replyToMessageId;
+    }
+    const extraHeaders: Record<string, string> | undefined = options.idempotencyKey
+      ? { "Idempotency-Key": options.idempotencyKey }
+      : undefined;
+    return this.rawRequest<Message>({
+      method: "POST",
+      path: `/messages/groups/${convId}/send`,
+      body: payload,
+      extraHeaders,
+      signal: options.signal,
+    });
+  }
+
+  /** List the members of a group conversation. Caller must be a member. */
+  async listGroupMembers(convId: string, options?: CallOptions): Promise<GroupMembersResponse> {
+    return this.rawRequest<GroupMembersResponse>({
+      method: "GET",
+      path: `/messages/groups/${convId}/members`,
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Invite a user to a group conversation. Admin-only. New members
+   * start in `pending` invite status until they call
+   * {@link respondToGroupInvite} with `accept=true`.
+   */
+  async addGroupMember(
+    convId: string,
+    username: string,
+    options?: CallOptions,
+  ): Promise<JsonObject> {
+    const params = new URLSearchParams({ username });
+    return this.rawRequest<JsonObject>({
+      method: "POST",
+      path: `/messages/groups/${convId}/members?${params.toString()}`,
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Remove a member from a group conversation. Admin-only.
+   *
+   * The creator cannot be removed — transfer the role first via
+   * {@link transferGroupCreator}.
+   */
+  async removeGroupMember(
+    convId: string,
+    userId: string,
+    options?: CallOptions,
+  ): Promise<JsonObject> {
+    return this.rawRequest<JsonObject>({
+      method: "DELETE",
+      path: `/messages/groups/${convId}/members/${userId}`,
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Promote or demote a group member to/from admin. Admin-only.
+   *
+   * The creator's admin flag cannot be cleared (it tracks the creator
+   * role); transfer the role with {@link transferGroupCreator} first.
+   */
+  async setGroupAdmin(
+    convId: string,
+    userId: string,
+    isAdmin: boolean,
+    options?: CallOptions,
+  ): Promise<JsonObject> {
+    // FastAPI bool coercion wants the literal lowercase strings.
+    const params = new URLSearchParams({ is_admin: isAdmin ? "true" : "false" });
+    return this.rawRequest<JsonObject>({
+      method: "PUT",
+      path: `/messages/groups/${convId}/members/${userId}/admin?${params.toString()}`,
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Transfer the creator role to another current member. The new
+   * creator inherits admin status; the previous creator stays in the
+   * group as an ordinary admin unless explicitly demoted afterwards.
+   * Only the current creator can call this.
+   */
+  async transferGroupCreator(
+    convId: string,
+    newCreatorUsername: string,
+    options?: CallOptions,
+  ): Promise<JsonObject> {
+    const params = new URLSearchParams({ new_creator_username: newCreatorUsername });
+    return this.rawRequest<JsonObject>({
+      method: "POST",
+      path: `/messages/groups/${convId}/transfer-creator?${params.toString()}`,
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Accept or decline a pending group invite. Callable by the invitee
+   * while their participant row has `invite_status == "pending"`.
+   * Accepting flips the row to `accepted`; declining removes it.
+   */
+  async respondToGroupInvite(
+    convId: string,
+    accept: boolean,
+    options?: CallOptions,
+  ): Promise<GroupInviteResponse> {
+    const params = new URLSearchParams({ accept: accept ? "true" : "false" });
+    return this.rawRequest<GroupInviteResponse>({
+      method: "POST",
+      path: `/messages/groups/${convId}/invite/respond?${params.toString()}`,
+      signal: options?.signal,
+    });
+  }
+
+  /** Mark every message in a group as read by the caller. */
+  async markGroupAllRead(convId: string, options?: CallOptions): Promise<MarkGroupReadResponse> {
+    return this.rawRequest<MarkGroupReadResponse>({
+      method: "POST",
+      path: `/messages/groups/${convId}/read-all`,
       signal: options?.signal,
     });
   }

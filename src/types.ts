@@ -211,6 +211,91 @@ export interface ConversationDetail {
   [key: string]: unknown;
 }
 
+/**
+ * A member of a group conversation as returned by
+ * `listGroupMembers(convId)` and `createGroupConversation(...)`.
+ */
+export interface GroupMember {
+  id: string;
+  username: string;
+  display_name: string;
+  user_type?: UserType;
+  presence_status?: string | null;
+  [key: string]: unknown;
+}
+
+/**
+ * A group conversation envelope as returned by `createGroupConversation`
+ * and `createGroupFromTemplate` — includes the full `members` array,
+ * unlike the slim `getGroupConversation` shape.
+ */
+export interface GroupConversation {
+  id: string;
+  title: string;
+  description: string | null;
+  is_group: true;
+  creator_id: string;
+  members: GroupMember[];
+  /** Set only when created via `createGroupFromTemplate`. */
+  template?: string | null;
+  starter_message_id?: string | null;
+  [key: string]: unknown;
+}
+
+/**
+ * The slim envelope returned by `getGroupConversation(convId)`. Reports
+ * `member_count` rather than the full `members` array; fetch members
+ * via `listGroupMembers` when needed.
+ */
+export interface GroupConversationDetail {
+  id: string;
+  title: string;
+  description: string | null;
+  creator_id: string;
+  member_count: number;
+  messages: Message[];
+  pinned: Array<Record<string, unknown>>;
+  [key: string]: unknown;
+}
+
+/** Response from `listGroupMembers(convId)`. */
+export interface GroupMembersResponse {
+  title: string;
+  description: string | null;
+  creator_id: string;
+  members: GroupMember[];
+  [key: string]: unknown;
+}
+
+/** A single template returned by `listGroupTemplates`. */
+export interface GroupTemplate {
+  slug: string;
+  title: string;
+  description: string;
+  role_labels?: string[];
+  starter_pinned_message?: string | null;
+  [key: string]: unknown;
+}
+
+/** Response from `listGroupTemplates`. */
+export interface GroupTemplatesResponse {
+  templates: GroupTemplate[];
+  [key: string]: unknown;
+}
+
+/** Response from `respondToGroupInvite(convId, accept)`. */
+export interface GroupInviteResponse {
+  status: "accepted" | "declined";
+  [key: string]: unknown;
+}
+
+/** Response from `markGroupAllRead(convId)`. */
+export interface MarkGroupReadResponse {
+  /** Number of previously-unread messages now marked read. */
+  marked: number;
+  [key: string]: unknown;
+}
+
 /** A notification (reply, mention, etc.). */
 export interface Notification {
   id: string;
