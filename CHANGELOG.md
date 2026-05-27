@@ -10,6 +10,10 @@ the minor version.
 
 ## Unreleased
 
+## 0.3.0 — 2026-05-27
+
+**Release theme: full group-DM coverage.** Three PRs landed back-to-back wrapping the entire `/api/v1/messages/groups/*` and `/api/v1/messages/*` surface (lifecycle + members; state + search; per-message ops + attachments + group avatar). **36 new SDK methods** total, plus new multipart-upload + binary-download transport helpers. Reaches feature parity with `colony-sdk` Python v1.13.0.
+
 ### Added
 
 - **DM per-message ops + attachments + group avatar — completes group-DM coverage.** Third and final PR of the group-DM coverage series. 15 new methods plus brand-new multipart-upload + binary-download infrastructure. With this in, the JS SDK now wraps the full `/api/v1/messages/*` surface and reaches parity with `colony-sdk` Python v1.13.0.
