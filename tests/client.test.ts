@@ -1203,6 +1203,148 @@ describe("group conversations: lifecycle + members", () => {
   });
 });
 
+describe("group conversations: state + search", () => {
+  const GROUP_ID = "11111111-2222-3333-4444-555555555555";
+  const MSG_ID = "22222222-3333-4444-5555-666666666666";
+
+  it("muteGroupConversation with no until sends bare POST (server reads as forever)", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ muted: true, muted_until: null });
+    const client = makeClient(mock);
+    await client.muteGroupConversation(GROUP_ID);
+    expect(mock.calls[1]?.method).toBe("POST");
+    expect(mock.calls[1]?.url).toMatch(/\/messages\/groups\/[^?]+\/mute$/);
+  });
+
+  it("muteGroupConversation threads until into query string", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ muted: false, muted_until: "2026-05-28T11:00:00Z" });
+    const client = makeClient(mock);
+    await client.muteGroupConversation(GROUP_ID, { until: "1h" });
+    expect(mock.calls[1]?.url).toContain(`/messages/groups/${GROUP_ID}/mute?until=1h`);
+  });
+
+  it("unmuteGroupConversation POSTs /unmute", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ muted: false, muted_until: null });
+    const client = makeClient(mock);
+    await client.unmuteGroupConversation(GROUP_ID);
+    expect(mock.calls[1]?.method).toBe("POST");
+    expect(mock.calls[1]?.url).toContain(`/messages/groups/${GROUP_ID}/unmute`);
+  });
+
+  it("snoozeGroupConversation threads duration as query param", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ snoozed_until: "2026-05-27T16:00:00Z" });
+    const client = makeClient(mock);
+    await client.snoozeGroupConversation(GROUP_ID, "until_morning");
+    expect(mock.calls[1]?.method).toBe("POST");
+    expect(mock.calls[1]?.url).toContain(
+      `/messages/groups/${GROUP_ID}/snooze?duration=until_morning`,
+    );
+  });
+
+  it("unsnoozeGroupConversation POSTs /unsnooze", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ snoozed_until: null });
+    const client = makeClient(mock);
+    await client.unsnoozeGroupConversation(GROUP_ID);
+    expect(mock.calls[1]?.url).toContain(`/messages/groups/${GROUP_ID}/unsnooze`);
+  });
+
+  it("setGroupReadReceipts with show=true sends ?show=true (lowercase)", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ override: true, effective: true });
+    const client = makeClient(mock);
+    await client.setGroupReadReceipts(GROUP_ID, { show: true });
+    expect(mock.calls[1]?.method).toBe("PATCH");
+    expect(mock.calls[1]?.url).toContain(`/messages/groups/${GROUP_ID}/receipts?show=true`);
+    expect(mock.calls[1]?.url).not.toContain("show=True");
+  });
+
+  it("setGroupReadReceipts with show=false sends ?show=false (lowercase)", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ override: false, effective: false });
+    const client = makeClient(mock);
+    await client.setGroupReadReceipts(GROUP_ID, { show: false });
+    expect(mock.calls[1]?.url).toContain("show=false");
+    expect(mock.calls[1]?.url).not.toContain("show=False");
+  });
+
+  it("setGroupReadReceipts with no show clears the override (no query string)", async () => {
+    // The three-state contract: show=undefined → PATCH with no query
+    // string at all. Distinct from show:true (?show=true) and show:false
+    // (?show=false). Server falls back to user-level preference.
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ override: null, effective: true });
+    const client = makeClient(mock);
+    await client.setGroupReadReceipts(GROUP_ID);
+    expect(mock.calls[1]?.method).toBe("PATCH");
+    expect(mock.calls[1]?.url).toMatch(/\/messages\/groups\/[^?]+\/receipts$/);
+  });
+
+  it("pinGroupMessage POSTs /messages/{msgId}/pin", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ pinned: true, message_id: MSG_ID });
+    const client = makeClient(mock);
+    await client.pinGroupMessage(GROUP_ID, MSG_ID);
+    expect(mock.calls[1]?.method).toBe("POST");
+    expect(mock.calls[1]?.url).toContain(`/messages/groups/${GROUP_ID}/messages/${MSG_ID}/pin`);
+  });
+
+  it("unpinGroupMessage DELETEs /messages/{msgId}/pin", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ pinned: false, message_id: MSG_ID });
+    const client = makeClient(mock);
+    await client.unpinGroupMessage(GROUP_ID, MSG_ID);
+    expect(mock.calls[1]?.method).toBe("DELETE");
+    expect(mock.calls[1]?.url).toContain(`/messages/groups/${GROUP_ID}/messages/${MSG_ID}/pin`);
+  });
+
+  it("searchGroupMessages defaults limit=50 offset=0", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ hits: [], total: 0 });
+    const client = makeClient(mock);
+    await client.searchGroupMessages(GROUP_ID, "hi");
+    expect(mock.calls[1]?.url).toContain(
+      `/messages/groups/${GROUP_ID}/search?q=hi&limit=50&offset=0`,
+    );
+  });
+
+  it("searchGroupMessages accepts custom pagination", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ hits: [], total: 0 });
+    const client = makeClient(mock);
+    await client.searchGroupMessages(GROUP_ID, "term", { limit: 20, offset: 40 });
+    expect(mock.calls[1]?.url).toContain("limit=20");
+    expect(mock.calls[1]?.url).toContain("offset=40");
+  });
+
+  it("searchGroupMessages percent-encodes ampersands in the query", async () => {
+    // `R&D` must serialize as `q=R%26D` so the server parses one `q`
+    // param. URLSearchParams handles this; pin to catch any future
+    // hand-rolled query-string construction.
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ hits: [], total: 0 });
+    const client = makeClient(mock);
+    await client.searchGroupMessages(GROUP_ID, "R&D");
+    expect(mock.calls[1]?.url).toContain("q=R%26D");
+  });
+});
+
 describe("trending + reports (v0.2.0)", () => {
   it("getRisingPosts hits /trending/posts/rising with no params by default", async () => {
     const mock = new MockFetch();

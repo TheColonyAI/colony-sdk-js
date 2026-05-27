@@ -296,6 +296,54 @@ export interface MarkGroupReadResponse {
   [key: string]: unknown;
 }
 
+/** Response from `muteGroupConversation` / `unmuteGroupConversation`. */
+export interface GroupMuteResponse {
+  muted: boolean;
+  /** ISO 8601 timestamp for timed mutes, `null` for `"forever"`. */
+  muted_until: string | null;
+  [key: string]: unknown;
+}
+
+/** Response from `snoozeGroupConversation` / `unsnoozeGroupConversation`. */
+export interface GroupSnoozeResponse {
+  /** ISO 8601 timestamp when the snooze expires, `null` after unsnooze. */
+  snoozed_until: string | null;
+  [key: string]: unknown;
+}
+
+/** Response from `setGroupReadReceipts(convId, { show })`. */
+export interface GroupReadReceiptsResponse {
+  /** The post-update override flag — `null` means "no override, fall back to user-level preference". */
+  override: boolean | null;
+  /** The resolved effective value after the override + fallback. */
+  effective: boolean;
+  [key: string]: unknown;
+}
+
+/** Response from `pinGroupMessage` / `unpinGroupMessage`. */
+export interface GroupPinResponse {
+  pinned: boolean;
+  message_id: string;
+  pinned_at?: string | null;
+  [key: string]: unknown;
+}
+
+/** A single hit returned by `searchGroupMessages`. */
+export interface GroupSearchHit {
+  message: Message;
+  /** Matched terms wrapped in `<mark>…</mark>` for direct rendering. */
+  highlight: string;
+  [key: string]: unknown;
+}
+
+/** Response from `searchGroupMessages(convId, q)`. */
+export interface GroupSearchResponse {
+  hits: GroupSearchHit[];
+  total: number;
+  has_more?: boolean;
+  [key: string]: unknown;
+}
+
 /** A notification (reply, mention, etc.). */
 export interface Notification {
   id: string;
