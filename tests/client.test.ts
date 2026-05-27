@@ -963,6 +963,222 @@ describe("messaging", () => {
   });
 });
 
+describe("group conversations: lifecycle + members", () => {
+  const GROUP_ID = "11111111-2222-3333-4444-555555555555";
+  const USER_ID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+
+  it("createGroupConversation puts title + repeated members as query params", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ id: GROUP_ID, title: "team", is_group: true, members: [] });
+    const client = makeClient(mock);
+    const result = await client.createGroupConversation("team", ["alice", "bob"]);
+    expect(mock.calls[1]?.method).toBe("POST");
+    const url = mock.calls[1]?.url ?? "";
+    expect(url).toContain("/messages/groups?");
+    expect(url).toContain("title=team");
+    // Multiple members must serialize as repeated keys, not a comma list.
+    expect(url).toContain("members=alice");
+    expect(url).toContain("members=bob");
+    expect(result.id).toBe(GROUP_ID);
+  });
+
+  it("createGroupConversation URL-encodes special characters in title", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ id: GROUP_ID });
+    const client = makeClient(mock);
+    await client.createGroupConversation("R&D Lab", ["alice"]);
+    // `&` must be percent-encoded so the server parses one `title` param.
+    expect(mock.calls[1]?.url).toContain("title=R%26D+Lab");
+  });
+
+  it("listGroupTemplates hits /messages/groups/templates", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ templates: [{ slug: "team", title: "Team" }] });
+    const client = makeClient(mock);
+    const result = await client.listGroupTemplates();
+    expect(mock.calls[1]?.url).toContain("/messages/groups/templates");
+    expect(result.templates[0]?.slug).toBe("team");
+  });
+
+  it("createGroupFromTemplate threads template + titleOverride", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ id: GROUP_ID, template: "team" });
+    const client = makeClient(mock);
+    await client.createGroupFromTemplate("team", ["alice"], { titleOverride: "Squad A" });
+    const url = mock.calls[1]?.url ?? "";
+    expect(url).toContain("/messages/groups/from-template?");
+    expect(url).toContain("template=team");
+    expect(url).toContain("members=alice");
+    expect(url).toContain("title_override=Squad+A");
+  });
+
+  it("getGroupConversation defaults limit=50 offset=0", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ id: GROUP_ID, member_count: 2, messages: [] });
+    const client = makeClient(mock);
+    await client.getGroupConversation(GROUP_ID);
+    expect(mock.calls[1]?.url).toContain(`/messages/groups/${GROUP_ID}?limit=50&offset=0`);
+  });
+
+  it("getGroupConversation accepts custom pagination", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ id: GROUP_ID });
+    const client = makeClient(mock);
+    await client.getGroupConversation(GROUP_ID, { limit: 20, offset: 40 });
+    expect(mock.calls[1]?.url).toContain("limit=20");
+    expect(mock.calls[1]?.url).toContain("offset=40");
+  });
+
+  it("updateGroupConversation with empty description clears (does NOT omit)", async () => {
+    // `description: ""` is a deliberate three-state: empty string clears,
+    // undefined means "don't touch", non-empty string sets new value.
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ ok: true });
+    const client = makeClient(mock);
+    await client.updateGroupConversation(GROUP_ID, { description: "" });
+    expect(mock.calls[1]?.method).toBe("PATCH");
+    expect(mock.calls[1]?.url).toContain("description=");
+  });
+
+  it("updateGroupConversation with both fields omitted sends PATCH with no query string", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ ok: true });
+    const client = makeClient(mock);
+    await client.updateGroupConversation(GROUP_ID);
+    // No "?" — server is expected to 400; we let it surface naturally.
+    expect(mock.calls[1]?.url).toMatch(/\/messages\/groups\/[^?]+$/);
+  });
+
+  it("sendGroupMessage posts body to /messages/groups/{id}/send", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ id: "m1", body: "hello" });
+    const client = makeClient(mock);
+    const msg = await client.sendGroupMessage(GROUP_ID, "hello");
+    expect(mock.calls[1]?.url).toContain(`/messages/groups/${GROUP_ID}/send`);
+    expect(JSON.parse(mock.calls[1]?.body ?? "{}").body).toBe("hello");
+    expect(msg.body).toBe("hello");
+  });
+
+  it("sendGroupMessage threads replyToMessageId into the JSON body as reply_to_message_id", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ id: "m1" });
+    const client = makeClient(mock);
+    await client.sendGroupMessage(GROUP_ID, "hi", { replyToMessageId: "parent-id" });
+    const body = JSON.parse(mock.calls[1]?.body ?? "{}");
+    expect(body.reply_to_message_id).toBe("parent-id");
+  });
+
+  it("sendGroupMessage sets the Idempotency-Key header when supplied", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ id: "m1" });
+    const client = makeClient(mock);
+    await client.sendGroupMessage(GROUP_ID, "hi", { idempotencyKey: "key-123" });
+    expect(mock.calls[1]?.headers["idempotency-key"]).toBe("key-123");
+  });
+
+  it("sendGroupMessage omits Idempotency-Key when not supplied", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ id: "m1" });
+    const client = makeClient(mock);
+    await client.sendGroupMessage(GROUP_ID, "hi");
+    expect(mock.calls[1]?.headers["idempotency-key"]).toBeUndefined();
+  });
+
+  it("listGroupMembers hits /messages/groups/{id}/members", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ title: "team", description: null, creator_id: "x", members: [] });
+    const client = makeClient(mock);
+    const result = await client.listGroupMembers(GROUP_ID);
+    expect(mock.calls[1]?.method).toBe("GET");
+    expect(mock.calls[1]?.url).toContain(`/messages/groups/${GROUP_ID}/members`);
+    expect(result.title).toBe("team");
+  });
+
+  it("addGroupMember POSTs username as query param", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ already_member: false, username: "alice" });
+    const client = makeClient(mock);
+    await client.addGroupMember(GROUP_ID, "alice");
+    expect(mock.calls[1]?.method).toBe("POST");
+    expect(mock.calls[1]?.url).toContain(`/messages/groups/${GROUP_ID}/members?username=alice`);
+  });
+
+  it("removeGroupMember DELETEs /members/{userId}", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ removed: true });
+    const client = makeClient(mock);
+    await client.removeGroupMember(GROUP_ID, USER_ID);
+    expect(mock.calls[1]?.method).toBe("DELETE");
+    expect(mock.calls[1]?.url).toContain(`/messages/groups/${GROUP_ID}/members/${USER_ID}`);
+  });
+
+  it("setGroupAdmin uses lowercase 'true'/'false' for FastAPI bool coercion", async () => {
+    // FastAPI parses query-string bools strictly: 'true'/'false' (and a few
+    // others). Python's `str(True)` → 'True' would be rejected. Pinned to
+    // catch any future capitalisation regression.
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ user_id: USER_ID, is_admin: true });
+    mock.json({ user_id: USER_ID, is_admin: false });
+    const client = makeClient(mock);
+    await client.setGroupAdmin(GROUP_ID, USER_ID, true);
+    expect(mock.calls[1]?.method).toBe("PUT");
+    expect(mock.calls[1]?.url).toContain("is_admin=true");
+    expect(mock.calls[1]?.url).not.toContain("is_admin=True");
+    await client.setGroupAdmin(GROUP_ID, USER_ID, false);
+    expect(mock.calls[2]?.url).toContain("is_admin=false");
+  });
+
+  it("transferGroupCreator threads new_creator_username", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ conversation_id: GROUP_ID, new_creator_id: USER_ID });
+    const client = makeClient(mock);
+    await client.transferGroupCreator(GROUP_ID, "bob");
+    expect(mock.calls[1]?.url).toContain(
+      `/messages/groups/${GROUP_ID}/transfer-creator?new_creator_username=bob`,
+    );
+  });
+
+  it("respondToGroupInvite serializes accept as lowercase bool", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ status: "accepted" });
+    mock.json({ status: "declined" });
+    const client = makeClient(mock);
+    await client.respondToGroupInvite(GROUP_ID, true);
+    expect(mock.calls[1]?.url).toContain("accept=true");
+    await client.respondToGroupInvite(GROUP_ID, false);
+    expect(mock.calls[2]?.url).toContain("accept=false");
+  });
+
+  it("markGroupAllRead hits /messages/groups/{id}/read-all", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ marked: 3 });
+    const client = makeClient(mock);
+    const result = await client.markGroupAllRead(GROUP_ID);
+    expect(mock.calls[1]?.method).toBe("POST");
+    expect(mock.calls[1]?.url).toContain(`/messages/groups/${GROUP_ID}/read-all`);
+    expect(result.marked).toBe(3);
+  });
+});
+
 describe("trending + reports (v0.2.0)", () => {
   it("getRisingPosts hits /trending/posts/rising with no params by default", async () => {
     const mock = new MockFetch();
