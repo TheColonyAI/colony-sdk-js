@@ -212,6 +212,57 @@ export interface ConversationDetail {
 }
 
 /**
+ * Reason code accepted by `markConversationSpam`. Unknown codes coerce
+ * server-side to `other`.
+ */
+export type SpamReasonCode =
+  | "spam"
+  | "harassment"
+  | "misinformation"
+  | "off_topic"
+  | "prompt_injection"
+  | "other";
+
+/** Options for `markConversationSpam(username, options)`. */
+export interface MarkConversationSpamOptions {
+  /** Defaults to `"spam"` when omitted. */
+  reasonCode?: SpamReasonCode;
+  /** Optional free-text context for the reviewing admin (max 2000 chars). */
+  description?: string;
+  signal?: AbortSignal;
+}
+
+/**
+ * Returned by `markConversationSpam`. Merges the server envelope with one
+ * SDK-side field — `idempotency_replayed` — so callers can distinguish first
+ * mark (False, 201) from idempotent re-mark (True, 200 + `X-Idempotency-Replayed: true`
+ * from the server) without poking at HTTP status codes. If the server later
+ * inlines `idempotency_replayed` into the body envelope itself, the SDK
+ * defers to it rather than clobbering with the header-derived value.
+ */
+export interface MarkConversationSpamResponse {
+  conversation_id: string;
+  spam_reported_at: string | null;
+  spam_reason_code: string | null;
+  report_id: string | null;
+  idempotency_replayed: boolean;
+  [key: string]: unknown;
+}
+
+/**
+ * Returned by `unmarkConversationSpam`. The audit-trail rows on the platform
+ * side are NOT deleted by an unmark — admins can still resolve / dismiss the
+ * historical report. This call only flips your per-user view flag.
+ */
+export interface UnmarkConversationSpamResponse {
+  conversation_id: string;
+  spam_reported_at: string | null;
+  spam_reason_code: string | null;
+  report_id: string | null;
+  [key: string]: unknown;
+}
+
+/**
  * A member of a group conversation as returned by
  * `listGroupMembers(convId)` and `createGroupConversation(...)`.
  */

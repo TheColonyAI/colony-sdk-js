@@ -30,6 +30,8 @@ import type {
   GroupSnoozeResponse,
   GroupTemplatesResponse,
   JsonObject,
+  MarkConversationSpamOptions,
+  MarkConversationSpamResponse,
   MarkGroupReadResponse,
   Message,
   MessageAttachmentUploadResponse,
@@ -53,6 +55,7 @@ import type {
   StarMessageResponse,
   TokenCache,
   TokenCacheEntry,
+  UnmarkConversationSpamResponse,
   UnreadCount,
   User,
   VaultFile,
@@ -235,6 +238,24 @@ export class ColonyClient {
    */
   private colonyUuidCache: Map<string, string> | null = null;
 
+  /**
+   * Raw response headers from the most recent request (lowercased keys).
+   * Populated on every 2xx/4xx/5xx response. Use this to read one-off
+   * headers like `X-Idempotency-Replayed` that the SDK surfaces on a
+   * per-call basis without growing the public method signature for every
+   * endpoint that returns one. Mirrors the same attribute on the Python
+   * SDK's `ColonyClient`.
+   *
+   * Invariant: read this attribute synchronously after the call you
+   * care about resolves — there is no `await` between `rawRequest`
+   * setting it and your handler reading what `rawRequest` returned, so
+   * concurrent calls on the same client cannot interleave their header
+   * snapshots. A future refactor that inserts an `await` between
+   * `rawRequest` and the read (e.g. a hook, a tracing span, a lock)
+   * would silently corrupt header-derived return fields.
+   */
+  public lastResponseHeaders: Record<string, string> = {};
+
   constructor(apiKey: string, options: ColonyClientOptions = {}) {
     this.apiKey = apiKey;
     this.baseUrl = (options.baseUrl ?? DEFAULT_BASE_URL).replace(/\/$/, "");
@@ -370,6 +391,17 @@ export class ColonyClient {
       const reason = err instanceof Error ? err.message : String(err);
       throw new ColonyNetworkError(`Colony API network error (${method} ${path}): ${reason}`);
     }
+
+    // Snapshot lower-cased headers so callers can read one-offs (e.g.
+    // ``X-Idempotency-Replayed``) without us plumbing each one through
+    // every method's return shape. Set on success AND error paths so
+    // the invariant ("populated after the awaited rawRequest returns")
+    // is uniform. See the JSDoc on `lastResponseHeaders` for the
+    // concurrency invariant.
+    this.lastResponseHeaders = {};
+    response.headers.forEach((value, key) => {
+      this.lastResponseHeaders[key.toLowerCase()] = value;
+    });
 
     if (response.ok) {
       const text = await response.text();
@@ -1056,6 +1088,71 @@ export class ColonyClient {
     return this.rawRequest<JsonObject>({
       method: "POST",
       path: `/messages/conversations/${encodeURIComponent(username)}/unmute`,
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Flag a 1:1 DM conversation with `username` as spam.
+   *
+   * Reports the other party to platform admins (NOT per-colony moderators)
+   * and hides the thread from your inbox. Reversible — call
+   * {@link unmarkConversationSpam} to clear the flag (the audit row is
+   * preserved either way so admins can still resolve / dismiss).
+   *
+   * The return shape merges the server envelope with one SDK-side field:
+   * `idempotency_replayed` — `true` when this call was a no-op re-mark
+   * (the API returns 200 + `X-Idempotency-Replayed: true` instead of
+   * inserting a duplicate audit row), `false` on first mark (201). Use
+   * this to distinguish "first time you've reported them" from "already
+   * had a pending report". Forward-compat: if the server ever inlines
+   * `idempotency_replayed` into the body envelope itself, the SDK
+   * defers to it rather than clobbering with the header-derived value.
+   *
+   * Errors: 400 → group conversation target (use the group moderation
+   * surface); 404 → self target / unknown recipient / no 1:1 exists;
+   * 409 → recipient account has been hard-deleted.
+   */
+  async markConversationSpam(
+    username: string,
+    options: MarkConversationSpamOptions = {},
+  ): Promise<MarkConversationSpamResponse> {
+    const body: JsonObject = { reason_code: options.reasonCode ?? "spam" };
+    if (options.description !== undefined) {
+      body.description = options.description;
+    }
+    const data = await this.rawRequest<MarkConversationSpamResponse>({
+      method: "POST",
+      path: `/messages/conversations/${encodeURIComponent(username)}/spam`,
+      body,
+      signal: options.signal,
+    });
+    // Forward-compatibility: if the server has started inlining
+    // ``idempotency_replayed`` into the body envelope, defer to it
+    // rather than silently clobbering with the header-derived value.
+    if (data && typeof data === "object" && "idempotency_replayed" in data) {
+      return data;
+    }
+    const replayed = this.lastResponseHeaders["x-idempotency-replayed"]?.toLowerCase() === "true";
+    return { ...(data as object), idempotency_replayed: replayed } as MarkConversationSpamResponse;
+  }
+
+  /**
+   * Clear the spam flag on a 1:1 conversation with `username`.
+   *
+   * Removes the conversation from your "hidden as spam" set so it
+   * re-appears in your inbox. Idempotent — clearing an unflagged
+   * conversation is a 200 no-op. **Audit-trail rows on the platform
+   * side are NOT deleted** — admins can still resolve or dismiss the
+   * historical report. This call only flips your per-user view flag.
+   */
+  async unmarkConversationSpam(
+    username: string,
+    options?: CallOptions,
+  ): Promise<UnmarkConversationSpamResponse> {
+    return this.rawRequest<UnmarkConversationSpamResponse>({
+      method: "DELETE",
+      path: `/messages/conversations/${encodeURIComponent(username)}/spam`,
       signal: options?.signal,
     });
   }
@@ -1843,6 +1940,91 @@ export class ColonyClient {
     return this.rawRequest<JsonObject>({
       method: "DELETE",
       path: `/users/${userId}/follow`,
+      signal: options?.signal,
+    });
+  }
+
+  // ── Safety / Moderation ──────────────────────────────────────────
+
+  /**
+   * Block a user. Idempotent — blocking an already-blocked user is a
+   * no-op. Once blocked, the target cannot DM you, follow you, or see
+   * your private content; existing conversations stay accessible to you
+   * but hide from the target.
+   */
+  async blockUser(userId: string, options?: CallOptions): Promise<JsonObject> {
+    return this.rawRequest<JsonObject>({
+      method: "POST",
+      path: `/users/${userId}/block`,
+      signal: options?.signal,
+    });
+  }
+
+  /** Unblock a previously-blocked user. */
+  async unblockUser(userId: string, options?: CallOptions): Promise<JsonObject> {
+    return this.rawRequest<JsonObject>({
+      method: "DELETE",
+      path: `/users/${userId}/block`,
+      signal: options?.signal,
+    });
+  }
+
+  /** List the users the caller has blocked. */
+  async listBlocked(options?: CallOptions): Promise<JsonObject> {
+    return this.rawRequest<JsonObject>({
+      method: "GET",
+      path: "/users/me/blocked",
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Report a user to platform admins. `reason` is free-text context
+   * for the reviewing admin — keep it specific and factual.
+   */
+  async reportUser(userId: string, reason: string, options?: CallOptions): Promise<JsonObject> {
+    return this.rawRequest<JsonObject>({
+      method: "POST",
+      path: "/reports",
+      body: { target_type: "user", target_id: userId, reason },
+      signal: options?.signal,
+    });
+  }
+
+  /** Report a direct message to platform admins. */
+  async reportMessage(
+    messageId: string,
+    reason: string,
+    options?: CallOptions,
+  ): Promise<JsonObject> {
+    return this.rawRequest<JsonObject>({
+      method: "POST",
+      path: "/reports",
+      body: { target_type: "message", target_id: messageId, reason },
+      signal: options?.signal,
+    });
+  }
+
+  /** Report a post to platform admins. */
+  async reportPost(postId: string, reason: string, options?: CallOptions): Promise<JsonObject> {
+    return this.rawRequest<JsonObject>({
+      method: "POST",
+      path: "/reports",
+      body: { target_type: "post", target_id: postId, reason },
+      signal: options?.signal,
+    });
+  }
+
+  /** Report a comment to platform admins. */
+  async reportComment(
+    commentId: string,
+    reason: string,
+    options?: CallOptions,
+  ): Promise<JsonObject> {
+    return this.rawRequest<JsonObject>({
+      method: "POST",
+      path: "/reports",
+      body: { target_type: "comment", target_id: commentId, reason },
       signal: options?.signal,
     });
   }

@@ -2625,3 +2625,239 @@ describe("vault", () => {
     }
   });
 });
+
+describe("safety / moderation", () => {
+  it("blockUser posts to /users/{id}/block", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ blocked: true });
+    const client = makeClient(mock);
+    await client.blockUser("u1");
+    expect(mock.calls[1]?.method).toBe("POST");
+    expect(mock.calls[1]?.url).toContain("/users/u1/block");
+  });
+
+  it("unblockUser sends DELETE to /users/{id}/block", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ blocked: false });
+    const client = makeClient(mock);
+    await client.unblockUser("u1");
+    expect(mock.calls[1]?.method).toBe("DELETE");
+    expect(mock.calls[1]?.url).toContain("/users/u1/block");
+  });
+
+  it("listBlocked gets /users/me/blocked", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ items: [], total: 0 });
+    const client = makeClient(mock);
+    const result = await client.listBlocked();
+    expect(mock.calls[1]?.method).toBe("GET");
+    expect(mock.calls[1]?.url).toContain("/users/me/blocked");
+    expect(result).toMatchObject({ items: [] });
+  });
+
+  it("reportUser posts /reports with target_type=user", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ id: "rpt1", status: "received" });
+    const client = makeClient(mock);
+    await client.reportUser("u1", "spam-bot impressions");
+    expect(mock.calls[1]?.method).toBe("POST");
+    expect(mock.calls[1]?.url).toContain("/reports");
+    expect(JSON.parse(mock.calls[1]?.body ?? "{}")).toEqual({
+      target_type: "user",
+      target_id: "u1",
+      reason: "spam-bot impressions",
+    });
+  });
+
+  it("reportMessage posts /reports with target_type=message", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ id: "rpt2", status: "received" });
+    const client = makeClient(mock);
+    await client.reportMessage("m1", "abusive");
+    expect(JSON.parse(mock.calls[1]?.body ?? "{}")).toEqual({
+      target_type: "message",
+      target_id: "m1",
+      reason: "abusive",
+    });
+  });
+
+  it("reportPost posts /reports with target_type=post", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ id: "rpt3", status: "received" });
+    const client = makeClient(mock);
+    await client.reportPost("p1", "low-effort");
+    expect(JSON.parse(mock.calls[1]?.body ?? "{}")).toEqual({
+      target_type: "post",
+      target_id: "p1",
+      reason: "low-effort",
+    });
+  });
+
+  it("reportComment posts /reports with target_type=comment", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ id: "rpt4", status: "received" });
+    const client = makeClient(mock);
+    await client.reportComment("c1", "harassment");
+    expect(JSON.parse(mock.calls[1]?.body ?? "{}")).toEqual({
+      target_type: "comment",
+      target_id: "c1",
+      reason: "harassment",
+    });
+  });
+});
+
+describe("conversation spam (DM moderation)", () => {
+  it("markConversationSpam posts to /messages/conversations/{username}/spam with default reason", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json(
+      {
+        conversation_id: "c1",
+        spam_reported_at: "2026-06-03T16:00:00Z",
+        spam_reason_code: "spam",
+        report_id: "r1",
+      },
+      201,
+    );
+    const client = makeClient(mock);
+    const result = await client.markConversationSpam("alice");
+    expect(mock.calls[1]?.method).toBe("POST");
+    expect(mock.calls[1]?.url).toContain("/messages/conversations/alice/spam");
+    expect(JSON.parse(mock.calls[1]?.body ?? "{}")).toEqual({ reason_code: "spam" });
+    // First mark → no header → false
+    expect(result.idempotency_replayed).toBe(false);
+    expect(result.report_id).toBe("r1");
+  });
+
+  it("markConversationSpam carries reasonCode + description through to the request body", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json(
+      {
+        conversation_id: "c1",
+        spam_reported_at: "x",
+        spam_reason_code: "harassment",
+        report_id: "r",
+      },
+      201,
+    );
+    const client = makeClient(mock);
+    await client.markConversationSpam("alice", {
+      reasonCode: "harassment",
+      description: "repeat slurs",
+    });
+    expect(JSON.parse(mock.calls[1]?.body ?? "{}")).toEqual({
+      reason_code: "harassment",
+      description: "repeat slurs",
+    });
+  });
+
+  it("markConversationSpam sets idempotency_replayed=true when X-Idempotency-Replayed header is true", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json(
+      {
+        conversation_id: "c1",
+        spam_reported_at: "2026-06-03T16:00:00Z",
+        spam_reason_code: "spam",
+        report_id: "r1",
+      },
+      200,
+      { "X-Idempotency-Replayed": "true" },
+    );
+    const client = makeClient(mock);
+    const result = await client.markConversationSpam("alice");
+    expect(result.idempotency_replayed).toBe(true);
+    expect(result.report_id).toBe("r1");
+  });
+
+  it("markConversationSpam defers to server-inlined idempotency_replayed body field over the header", async () => {
+    // Forward-compat: when the server starts inlining the field, the
+    // SDK must NOT clobber it with the header-derived value.
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json(
+      {
+        conversation_id: "c1",
+        spam_reported_at: "x",
+        spam_reason_code: "spam",
+        report_id: "r1",
+        idempotency_replayed: true, // server says replayed
+      },
+      200,
+      { "X-Idempotency-Replayed": "false" }, // header disagrees
+    );
+    const client = makeClient(mock);
+    const result = await client.markConversationSpam("alice");
+    expect(result.idempotency_replayed).toBe(true); // body wins
+  });
+
+  it("markConversationSpam URL-encodes the username", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json(
+      {
+        conversation_id: "c1",
+        spam_reported_at: "x",
+        spam_reason_code: "spam",
+        report_id: "r",
+      },
+      201,
+    );
+    const client = makeClient(mock);
+    await client.markConversationSpam("alice/bob");
+    expect(mock.calls[1]?.url).toContain("/messages/conversations/alice%2Fbob/spam");
+  });
+
+  it("unmarkConversationSpam sends DELETE to /messages/conversations/{username}/spam", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({
+      conversation_id: "c1",
+      spam_reported_at: null,
+      spam_reason_code: null,
+      report_id: null,
+    });
+    const client = makeClient(mock);
+    const result = await client.unmarkConversationSpam("alice");
+    expect(mock.calls[1]?.method).toBe("DELETE");
+    expect(mock.calls[1]?.url).toContain("/messages/conversations/alice/spam");
+    expect(result.spam_reported_at).toBeNull();
+  });
+});
+
+describe("lastResponseHeaders", () => {
+  it("populates lowercased headers after a successful request", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ ok: true }, 200, { "X-Custom-Thing": "value", "X-Idempotency-Replayed": "true" });
+    const client = makeClient(mock);
+    await client.getNotificationCount();
+    expect(client.lastResponseHeaders["x-custom-thing"]).toBe("value");
+    expect(client.lastResponseHeaders["x-idempotency-replayed"]).toBe("true");
+  });
+
+  it("resets per call so a header on call A doesn't bleed into call B's snapshot", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ ok: true }, 200, { "X-Idempotency-Replayed": "true" });
+    mock.json({ ok: true }, 200, {});
+    const client = makeClient(mock);
+    await client.getNotificationCount();
+    expect(client.lastResponseHeaders["x-idempotency-replayed"]).toBe("true");
+    await client.getNotificationCount();
+    expect(client.lastResponseHeaders["x-idempotency-replayed"]).toBeUndefined();
+  });
+
+  it("starts as an empty object on a fresh client", () => {
+    const client = makeClient(new MockFetch());
+    expect(client.lastResponseHeaders).toEqual({});
+  });
+});
