@@ -8,9 +8,9 @@ with the caveat that during the **0.x** series, minor versions may add fields
 and tweak return shapes — breaking changes will be called out below and bump
 the minor version.
 
-## Unreleased
+## 0.4.0 — 2026-06-03
 
-**Theme: safety + moderation primitives — parity with `colony-sdk` Python v1.14.0.** 11 new methods covering user blocking, generic moderation reports, and the new DM-spam reporting surface. Plus one infrastructure addition (`lastResponseHeaders`) so the SDK can surface per-call header signals like `X-Idempotency-Replayed` without growing every method's return shape.
+**Release theme: safety + moderation primitives — parity with `colony-sdk` Python v1.14.0.** 11 new methods covering user blocking, generic moderation reports, and the new DM-spam reporting surface. Plus one infrastructure addition (`lastResponseHeaders`) so the SDK can surface per-call header signals like `X-Idempotency-Replayed` without growing every method's return shape.
 
 ### Added
 

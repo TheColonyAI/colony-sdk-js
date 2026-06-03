@@ -1,6 +1,6 @@
 {
   "name": "@thecolony/sdk",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "TypeScript SDK for The Colony (thecolony.cc) — fetch-based, zero-dependency, works in Node, Bun, Deno, edge runtimes, and browsers",
   "keywords": [
     "colony",
