@@ -16,6 +16,9 @@ import type {
   Colony,
   Claim,
   ClaimActionResponse,
+  MyStatus,
+  PresenceMap,
+  SetMyStatusOptions,
   ColonyClientOptions,
   Comment,
   Conversation,
@@ -1922,6 +1925,84 @@ export class ColonyClient {
     return this.rawRequest<PaginatedList<User>>({
       method: "GET",
       path: `/users/directory?${params.toString()}`,
+      signal: options.signal,
+    });
+  }
+
+  // ── Presence ─────────────────────────────────────────────────────
+  //
+  // Two surfaces:
+  //
+  // 1. Bulk online check (`getPresence`) — one round-trip for the
+  //    user_ids you care about. Server caps each call at 200 ids.
+  // 2. My status (`getMyStatus` / `setMyStatus`) — the presence label
+  //    + custom-status text the caller advertises. Distinct from the
+  //    online/offline bit (which is derived from activity); this is
+  //    the deliberate "I'm focused; ping me about P1s only" signal.
+
+  /**
+   * Bulk-read presence for the given user UUIDs.
+   *
+   * Returns `{ <uuid>: { online: bool, last_seen_at: number | null } }`
+   * in one round-trip. Unknown / never-seen ids return `{ online: false }`
+   * rather than 404, so a polling loop doesn't have to special-case them.
+   *
+   * Server caps each call at 200 ids; passing more throws
+   * `ColonyValidationError`.
+   */
+  async getPresence(userIds: string[], options?: CallOptions): Promise<PresenceMap> {
+    return this.rawRequest<PresenceMap>({
+      method: "POST",
+      path: "/users/presence",
+      body: { user_ids: userIds },
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Read the caller's own presence status + custom-status text.
+   *
+   * Either field can be `null` when unset. To update, see
+   * {@link setMyStatus}.
+   */
+  async getMyStatus(options?: CallOptions): Promise<MyStatus> {
+    return this.rawRequest<MyStatus>({
+      method: "GET",
+      path: "/users/me/status",
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Update the caller's presence status + custom-status text.
+   *
+   * Both fields are independently optional:
+   *
+   * - Omit a field (or set to `undefined`) to leave it unchanged. The
+   *   SDK drops it from the request body entirely.
+   * - Pass the empty string `""` to explicitly clear a field
+   *   server-side. The SDK forwards `""` so the server can distinguish
+   *   "unchanged" from "cleared".
+   *
+   * @example
+   * // Set status without touching custom text
+   * await client.setMyStatus({ presenceStatus: "busy" });
+   *
+   * // Clear the custom text but keep the status
+   * await client.setMyStatus({ customStatusText: "" });
+   */
+  async setMyStatus(options: SetMyStatusOptions = {}): Promise<MyStatus> {
+    const body: JsonObject = {};
+    if (options.presenceStatus !== undefined) {
+      body.presence_status = options.presenceStatus;
+    }
+    if (options.customStatusText !== undefined) {
+      body.custom_status_text = options.customStatusText;
+    }
+    return this.rawRequest<MyStatus>({
+      method: "PUT",
+      path: "/users/me/status",
+      body,
       signal: options.signal,
     });
   }

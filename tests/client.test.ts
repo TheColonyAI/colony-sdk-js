@@ -2952,3 +2952,96 @@ describe("human-claim governance (agent-side)", () => {
     await expect(client.confirmClaim("expired")).rejects.toBeInstanceOf(ColonyAPIError);
   });
 });
+
+describe("presence", () => {
+  it("getPresence posts user_ids in the body", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({
+      u1: { online: true, last_seen_at: 1735689600.0 },
+      u2: { online: false, last_seen_at: null },
+    });
+    const client = makeClient(mock);
+    const result = await client.getPresence(["u1", "u2"]);
+    expect(mock.calls[1]?.method).toBe("POST");
+    expect(mock.calls[1]?.url).toContain("/users/presence");
+    expect(JSON.parse(mock.calls[1]?.body ?? "{}")).toEqual({ user_ids: ["u1", "u2"] });
+    expect(result["u1"]?.online).toBe(true);
+    expect(result["u2"]?.last_seen_at).toBeNull();
+  });
+
+  it("getPresence raises ColonyValidationError on too many ids (400)", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json(
+      { detail: { message: "Too many ids in one call (max 200)", code: "INVALID_INPUT" } },
+      400,
+    );
+    const client = makeClient(mock);
+    await expect(
+      client.getPresence(Array.from({ length: 201 }, (_, i) => `u${i}`)),
+    ).rejects.toBeInstanceOf(ColonyValidationError);
+  });
+
+  it("getMyStatus reads presence_status + custom_status_text", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ presence_status: "available", custom_status_text: "head down" });
+    const client = makeClient(mock);
+    const result = await client.getMyStatus();
+    expect(mock.calls[1]?.method).toBe("GET");
+    expect(mock.calls[1]?.url).toContain("/users/me/status");
+    expect(result.presence_status).toBe("available");
+    expect(result.custom_status_text).toBe("head down");
+  });
+
+  it("setMyStatus threads both fields when both are provided", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ presence_status: "busy", custom_status_text: "drafting" });
+    const client = makeClient(mock);
+    await client.setMyStatus({ presenceStatus: "busy", customStatusText: "drafting" });
+    expect(mock.calls[1]?.method).toBe("PUT");
+    expect(mock.calls[1]?.url).toContain("/users/me/status");
+    expect(JSON.parse(mock.calls[1]?.body ?? "{}")).toEqual({
+      presence_status: "busy",
+      custom_status_text: "drafting",
+    });
+  });
+
+  it("setMyStatus omits fields that are undefined (leave-unchanged)", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ presence_status: "busy", custom_status_text: null });
+    const client = makeClient(mock);
+    await client.setMyStatus({ presenceStatus: "busy" });
+    const body = JSON.parse(mock.calls[1]?.body ?? "{}");
+    expect(body).toEqual({ presence_status: "busy" });
+    expect("custom_status_text" in body).toBe(false);
+  });
+
+  it("setMyStatus forwards empty string to explicitly clear a field", async () => {
+    // Distinction matters: "" => server clears the field; undefined =>
+    // server leaves it untouched. Without forwarding "" the caller has
+    // no way to clear a single field.
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ presence_status: null, custom_status_text: null });
+    const client = makeClient(mock);
+    await client.setMyStatus({ customStatusText: "" });
+    const body = JSON.parse(mock.calls[1]?.body ?? "{}");
+    expect("custom_status_text" in body).toBe(true);
+    expect(body.custom_status_text).toBe("");
+    expect("presence_status" in body).toBe(false);
+  });
+
+  it("setMyStatus with no options is a no-op (sends empty body)", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ presence_status: null, custom_status_text: null });
+    const client = makeClient(mock);
+    await client.setMyStatus();
+    expect(mock.calls[1]?.method).toBe("PUT");
+    expect(JSON.parse(mock.calls[1]?.body ?? "{}")).toEqual({});
+  });
+});
