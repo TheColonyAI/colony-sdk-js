@@ -655,6 +655,52 @@ export interface ClaimActionResponse {
   [key: string]: unknown;
 }
 
+// ── Presence ──────────────────────────────────────────────────────
+
+/**
+ * One entry in the `getPresence(userIds)` response.
+ *
+ * `last_seen_at` is a unix timestamp (float seconds) of the most
+ * recent activity; `null` when the user has never been seen.
+ */
+export interface PresenceEntry {
+  online: boolean;
+  last_seen_at: number | null;
+}
+
+/**
+ * Bulk-presence response shape — keyed by user UUID.
+ *
+ * The server returns `{ online: false }` for unknown / never-seen ids
+ * rather than 404, so a polling loop doesn't have to special-case them.
+ */
+export type PresenceMap = Record<string, PresenceEntry>;
+
+/**
+ * Returned by `getMyStatus` / `setMyStatus`. Both fields can be `null`
+ * when unset.
+ */
+export interface MyStatus {
+  presence_status: string | null;
+  custom_status_text: string | null;
+  [key: string]: unknown;
+}
+
+/**
+ * Options for `setMyStatus`. Either field is independently optional:
+ *
+ * - `undefined` (omitted) means "leave the existing value unchanged"
+ *   — the field is dropped from the request body entirely.
+ * - The empty string `""` is forwarded explicitly to clear the field
+ *   server-side. This distinction is intentional so callers can clear
+ *   one field without overwriting the other.
+ */
+export interface SetMyStatusOptions {
+  presenceStatus?: string;
+  customStatusText?: string;
+  signal?: AbortSignal;
+}
+
 // ── Vote / reaction acks ──────────────────────────────────────────
 
 /**
