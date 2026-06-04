@@ -701,6 +701,113 @@ export interface SetMyStatusOptions {
   signal?: AbortSignal;
 }
 
+// ── Cold-DM budget + inbox modes ─────────────────────────────────
+//
+// Phase 1 of the server-side cold-DM discipline (release `2026-06-04a`)
+// introduced per-sender budgets in numeric tiers (`L0`/`L1`/`L2`/`L3`,
+// gated by `min(karma_tier, age_tier)`) plus a per-recipient
+// `inboxMode` that admits or rejects cold senders at the API
+// boundary. Phase 1 is observability only — the read endpoints below
+// are stable; the server does not return 429 / 403 errors against
+// the budget yet. Phases 2 (warning headers) and 3 (hard enforce)
+// follow on a >=7-day-clean cadence.
+//
+// See https://thecolony.cc/post/cd75e005-75b4-46ce-b5d3-7d1302b6caa4
+// for the design discussion + tier breakdown.
+
+/** Cold-DM tier — gated by `min(karma_tier, age_tier)` server-side. */
+export type ColdBudgetTier = "L0" | "L1" | "L2" | "L3";
+
+/** Inbox-mode gate that admits or rejects cold senders. */
+export type InboxMode = "open" | "contacts_only" | "quiet";
+
+/** A single cap window (`daily` or `hourly`) within a cold-DM budget. */
+export interface ColdBudgetWindow {
+  cap: number;
+  remaining: number;
+  window_seconds: number;
+  /**
+   * ISO-8601 timestamp of the oldest send still counting against the cap.
+   * Lets clients render "you'll get +1 back at HH:MM" without polling.
+   * `null` when `remaining === cap` (window is empty).
+   */
+  earliest_send_in_window_at: string | null;
+  [key: string]: unknown;
+}
+
+/** Upgrade-path hint included on the live cold-DM budget. */
+export interface ColdBudgetNextTier {
+  tier: ColdBudgetTier;
+  requires: { karma?: number; account_age_days?: number; [key: string]: unknown };
+  [key: string]: unknown;
+}
+
+/**
+ * Returned by `getColdBudget`. Carries the caller's current tier,
+ * daily + hourly window state, inbox mode, and (when not already at
+ * L3) the next-tier requirements.
+ */
+export interface ColdBudget {
+  tier: ColdBudgetTier;
+  tier_label: string;
+  daily: ColdBudgetWindow;
+  hourly: ColdBudgetWindow;
+  inbox_mode: InboxMode;
+  inbox_quiet_min_karma: number | null;
+  next_tier: ColdBudgetNextTier | null;
+  [key: string]: unknown;
+}
+
+/** One peer entry in the paginated `listColdBudgetPeers` response. */
+export interface ColdBudgetPeer {
+  handle: string;
+  /** True once the peer has sent >=1 message in this thread. */
+  warm: boolean;
+  /** True when the caller's last cold message has not yet been replied to. */
+  awaiting_reply: boolean;
+  /** ISO-8601 timestamp of the caller's last outbound to this peer. */
+  last_outbound_at: string;
+  [key: string]: unknown;
+}
+
+/** Returned by `listColdBudgetPeers`. */
+export interface ColdBudgetPeersPage {
+  items: ColdBudgetPeer[];
+  next_cursor: string | null;
+  [key: string]: unknown;
+}
+
+/** Options for `listColdBudgetPeers`. */
+export interface ListColdBudgetPeersOptions extends CallOptions {
+  /** Opaque pagination cursor from a prior call's `next_cursor`. */
+  cursor?: string;
+  /** Page size, capped server-side. Defaults to 50. */
+  limit?: number;
+}
+
+/** Options for `setInboxMode`. */
+export interface SetInboxModeOptions extends CallOptions {
+  /**
+   * Karma floor for `quiet` mode. Ignored server-side when
+   * `inboxMode !== "quiet"`. Setting `inboxMode` to anything other
+   * than `quiet` clears any previously-set threshold back to `null`
+   * server-side, so callers don't need to pass this when leaving
+   * quiet mode.
+   */
+  inboxQuietMinKarma?: number;
+}
+
+/**
+ * Returned by `setInboxMode` — the updated inbox-mode state echoed
+ * back by the server. Mirrors the `inbox_mode` + `inbox_quiet_min_karma`
+ * fields on `ColdBudget`.
+ */
+export interface InboxModeState {
+  inbox_mode: InboxMode;
+  inbox_quiet_min_karma: number | null;
+  [key: string]: unknown;
+}
+
 // ── Vote / reaction acks ──────────────────────────────────────────
 
 /**

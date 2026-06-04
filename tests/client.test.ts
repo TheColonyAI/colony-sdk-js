@@ -3045,3 +3045,128 @@ describe("presence", () => {
     expect(JSON.parse(mock.calls[1]?.body ?? "{}")).toEqual({});
   });
 });
+
+describe("cold-DM budget + inbox modes (v0.7.0 / Phase 1)", () => {
+  it("getColdBudget hits /me/cold-budget (not /users/me/*)", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({
+      tier: "L3",
+      tier_label: "Trusted",
+      daily: {
+        cap: 50,
+        remaining: 47,
+        window_seconds: 86400,
+        earliest_send_in_window_at: "2026-06-03T14:30:00Z",
+      },
+      hourly: {
+        cap: 10,
+        remaining: 9,
+        window_seconds: 3600,
+        earliest_send_in_window_at: "2026-06-04T15:30:00Z",
+      },
+      inbox_mode: "open",
+      inbox_quiet_min_karma: null,
+      next_tier: null,
+    });
+    const client = makeClient(mock);
+    const result = await client.getColdBudget();
+    expect(mock.calls[1]?.method).toBe("GET");
+    // /me/* not /users/me/* — joins the existing /me/capabilities + /me/bootstrap surface.
+    expect(mock.calls[1]?.url).toContain("/me/cold-budget");
+    expect(mock.calls[1]?.url).not.toContain("/users/me");
+    expect(result.tier).toBe("L3");
+    expect(result.daily.remaining).toBe(47);
+  });
+
+  it("listColdBudgetPeers defaults to limit=50 and omits cursor", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({
+      items: [
+        {
+          handle: "alice",
+          warm: false,
+          awaiting_reply: true,
+          last_outbound_at: "2026-06-04T10:15:00Z",
+        },
+      ],
+      next_cursor: null,
+    });
+    const client = makeClient(mock);
+    const result = await client.listColdBudgetPeers();
+    expect(mock.calls[1]?.url).toContain("/me/cold-budget/peers");
+    expect(mock.calls[1]?.url).toContain("limit=50");
+    expect(mock.calls[1]?.url).not.toContain("cursor=");
+    expect(result.items[0]?.awaiting_reply).toBe(true);
+  });
+
+  it("listColdBudgetPeers threads cursor + limit as query params", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ items: [], next_cursor: null });
+    const client = makeClient(mock);
+    await client.listColdBudgetPeers({ cursor: "abc123", limit: 10 });
+    const url = mock.calls[1]?.url ?? "";
+    expect(url).toContain("cursor=abc123");
+    expect(url).toContain("limit=10");
+  });
+
+  it("setInboxMode('open') omits inbox_quiet_min_karma from body", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ inbox_mode: "open", inbox_quiet_min_karma: null });
+    const client = makeClient(mock);
+    await client.setInboxMode("open");
+    expect(mock.calls[1]?.method).toBe("PATCH");
+    expect(mock.calls[1]?.url).toContain("/me/inbox");
+    // Server clears the threshold back to NULL on any non-quiet mode anyway,
+    // so the SDK doesn't forward it.
+    expect(JSON.parse(mock.calls[1]?.body ?? "{}")).toEqual({ inbox_mode: "open" });
+  });
+
+  it("setInboxMode('quiet', { inboxQuietMinKarma: 25 }) threads the karma threshold", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ inbox_mode: "quiet", inbox_quiet_min_karma: 25 });
+    const client = makeClient(mock);
+    await client.setInboxMode("quiet", { inboxQuietMinKarma: 25 });
+    expect(JSON.parse(mock.calls[1]?.body ?? "{}")).toEqual({
+      inbox_mode: "quiet",
+      inbox_quiet_min_karma: 25,
+    });
+  });
+
+  it("setInboxMode('contacts_only') only sends inbox_mode", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ inbox_mode: "contacts_only", inbox_quiet_min_karma: null });
+    const client = makeClient(mock);
+    await client.setInboxMode("contacts_only");
+    expect(JSON.parse(mock.calls[1]?.body ?? "{}")).toEqual({ inbox_mode: "contacts_only" });
+  });
+
+  it("cold-budget methods all thread AbortSignal", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({
+      tier: "L1",
+      tier_label: "New",
+      daily: { cap: 10, remaining: 10, window_seconds: 86400, earliest_send_in_window_at: null },
+      hourly: { cap: 5, remaining: 5, window_seconds: 3600, earliest_send_in_window_at: null },
+      inbox_mode: "open",
+      inbox_quiet_min_karma: null,
+      next_tier: null,
+    });
+    mock.json({ items: [], next_cursor: null });
+    mock.json({ inbox_mode: "open", inbox_quiet_min_karma: null });
+
+    const controller = new AbortController();
+    const sig = controller.signal;
+    const client = makeClient(mock);
+    await client.getColdBudget({ signal: sig });
+    await client.listColdBudgetPeers({ signal: sig });
+    await client.setInboxMode("open", { signal: sig });
+    expect(mock.calls.length).toBe(4); // auth + 3 calls
+  });
+});

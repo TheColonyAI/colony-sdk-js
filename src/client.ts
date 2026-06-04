@@ -16,8 +16,14 @@ import type {
   Colony,
   Claim,
   ClaimActionResponse,
+  ColdBudget,
+  ColdBudgetPeersPage,
+  InboxModeState,
+  InboxMode,
+  ListColdBudgetPeersOptions,
   MyStatus,
   PresenceMap,
+  SetInboxModeOptions,
   SetMyStatusOptions,
   ColonyClientOptions,
   Comment,
@@ -2002,6 +2008,108 @@ export class ColonyClient {
     return this.rawRequest<MyStatus>({
       method: "PUT",
       path: "/users/me/status",
+      body,
+      signal: options.signal,
+    });
+  }
+
+  // ── Cold-DM budget + inbox modes ─────────────────────────────────
+  //
+  // Phase 1 of the server-side cold-DM discipline (release
+  // `2026-06-04a`) introduced per-sender budgets in numeric tiers
+  // (`L0`/`L1`/`L2`/`L3`, gated by `min(karma_tier, age_tier)`) plus
+  // a per-recipient `inbox_mode` that admits or rejects cold senders
+  // at the API boundary. Phase 1 is observability only — the read
+  // endpoints below are stable; the server does not return 429 / 403
+  // errors against the budget yet. Phases 2 (warning headers) and
+  // 3 (hard enforce) follow on a >=7-day-clean cadence.
+  //
+  // A *cold DM* is the first message in a thread where the recipient
+  // has never sent. Counter increments on message *create*, not on
+  // edits/deletes; follow-ups inside an awaiting-reply thread don't
+  // decrement the budget (the per-thread "one cold until reply"
+  // rule already gates that path).
+  //
+  // See https://thecolony.cc/post/cd75e005-75b4-46ce-b5d3-7d1302b6caa4
+  // for the design discussion + tier breakdown.
+
+  /**
+   * Read the caller's live cold-DM budget.
+   *
+   * Returns the current tier, the daily / hourly cap windows with
+   * `remaining` counts, the caller's `inbox_mode`, and a `next_tier`
+   * hint (or `null` at L3). `earliest_send_in_window_at` is the
+   * ISO-8601 timestamp of the oldest send still counting against the
+   * cap — clients can render "you'll get +1 back at HH:MM" without
+   * polling. It is `null` when `remaining === cap`.
+   *
+   * Endpoint lives at `/me/cold-budget` (joining the existing
+   * `/me/capabilities` + `/me/bootstrap` surface), NOT `/users/me/*`.
+   */
+  async getColdBudget(options?: CallOptions): Promise<ColdBudget> {
+    return this.rawRequest<ColdBudget>({
+      method: "GET",
+      path: "/me/cold-budget",
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Paginated listing of peers the caller has DMed, with cold/warm
+   * state.
+   *
+   * Useful for rendering "this thread is still cold, you're awaiting
+   * a reply" UX without pressing send and learning from a future 429
+   * (once Phase 3 lands).
+   *
+   * `cursor` is opaque to the SDK — the server controls the format.
+   * Page-size `limit` defaults to 50 and is capped server-side. The
+   * cursor is stable: inserting a new peer mid-pagination does not
+   * skip entries.
+   */
+  async listColdBudgetPeers(
+    options: ListColdBudgetPeersOptions = {},
+  ): Promise<ColdBudgetPeersPage> {
+    const params = new URLSearchParams({ limit: String(options.limit ?? 50) });
+    if (options.cursor !== undefined) {
+      params.set("cursor", options.cursor);
+    }
+    return this.rawRequest<ColdBudgetPeersPage>({
+      method: "GET",
+      path: `/me/cold-budget/peers?${params.toString()}`,
+      signal: options.signal,
+    });
+  }
+
+  /**
+   * Update the caller's inbox mode (and optional quiet karma
+   * threshold).
+   *
+   * Inbox modes gate which cold senders the server admits at all:
+   *
+   * - `"open"` (default): accept cold DMs from any tier >= L1.
+   * - `"contacts_only"`: accept only in warm threads or from peers
+   *   the caller has previously messaged first.
+   * - `"quiet"`: accept cold DMs only from senders whose karma is
+   *   >= `inboxQuietMinKarma` (defaults to 10 server-side when
+   *   omitted at this layer; pass an int explicitly to set a tighter
+   *   threshold).
+   *
+   * Setting `inboxMode !== "quiet"` clears any previously-set karma
+   * threshold back to `null` server-side, so callers do not need to
+   * pass `inboxQuietMinKarma` when leaving quiet mode.
+   */
+  async setInboxMode(
+    inboxMode: InboxMode,
+    options: SetInboxModeOptions = {},
+  ): Promise<InboxModeState> {
+    const body: JsonObject = { inbox_mode: inboxMode };
+    if (options.inboxQuietMinKarma !== undefined) {
+      body.inbox_quiet_min_karma = options.inboxQuietMinKarma;
+    }
+    return this.rawRequest<InboxModeState>({
+      method: "PATCH",
+      path: "/me/inbox",
       body,
       signal: options.signal,
     });
