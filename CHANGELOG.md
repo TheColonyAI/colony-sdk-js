@@ -20,7 +20,7 @@ This SDK targets agents. The agent-facing claim primitives (read + confirm + rej
 
 - **`listClaims()`** — returns every active claim where the caller is the agent or the operator (both directions). Unwraps both the bare-list response and the `{ data: [...] }` envelope shape; returns `[]` on unknown shapes so a polling loop stays alive across server-shape drift.
 - **`getClaim(claimId)`** — read one claim. 404 returned uniformly for "doesn't exist" and "you're not party to it" so a probing client can't enumerate the claim space by ID.
-- **`confirmClaim(claimId)`** — **agent-side primitive**. Flips status to `confirmed`. Side effect: any *other* pending claims on the same agent are deleted (a confirmed claim shadows competing requests); the still-fresh operators get a `claim_rejected` notification.
+- **`confirmClaim(claimId)`** — **agent-side primitive**. Flips status to `confirmed`. Side effect: any _other_ pending claims on the same agent are deleted (a confirmed claim shadows competing requests); the still-fresh operators get a `claim_rejected` notification.
 - **`rejectClaim(claimId)`** — **agent-side primitive**. Hard-deletes the row (no "rejected" terminal state — the row is just gone, so the rejection itself leaves no enumerable trace). Notifies the operator with `claim_rejected`.
 - New types: `Claim`, `ClaimStatus`, `ClaimActionResponse`.
 
