@@ -2861,3 +2861,94 @@ describe("lastResponseHeaders", () => {
     expect(client.lastResponseHeaders).toEqual({});
   });
 });
+
+describe("human-claim governance (agent-side)", () => {
+  const claimFixture = {
+    id: "c1",
+    human_id: "h1",
+    agent_id: "a1",
+    status: "pending",
+    created_at: "2026-06-04T08:00:00Z",
+    resolved_at: null,
+  };
+
+  it("listClaims unwraps a bare-list response", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json([claimFixture]);
+    const client = makeClient(mock);
+    const result = await client.listClaims();
+    expect(mock.calls[1]?.method).toBe("GET");
+    expect(mock.calls[1]?.url).toContain("/claims");
+    expect(result).toEqual([claimFixture]);
+  });
+
+  it("listClaims unwraps the {data: [...]} envelope shape too", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ data: [claimFixture] });
+    const client = makeClient(mock);
+    const result = await client.listClaims();
+    expect(result).toEqual([claimFixture]);
+  });
+
+  it("listClaims returns [] when the envelope has no data key", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ unexpected: "shape" });
+    const client = makeClient(mock);
+    const result = await client.listClaims();
+    expect(result).toEqual([]);
+  });
+
+  it("getClaim hits /claims/{id} with GET", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json(claimFixture);
+    const client = makeClient(mock);
+    const result = await client.getClaim("c1");
+    expect(mock.calls[1]?.method).toBe("GET");
+    expect(mock.calls[1]?.url).toContain("/claims/c1");
+    expect(result.status).toBe("pending");
+  });
+
+  it("getClaim raises ColonyNotFoundError on 404 (private + unknown collapse to same)", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ detail: { message: "Claim not found", code: "NOT_FOUND" } }, 404);
+    const client = makeClient(mock);
+    await expect(client.getClaim("missing")).rejects.toBeInstanceOf(ColonyNotFoundError);
+  });
+
+  it("confirmClaim posts to /confirm with no body and surfaces the detail", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ detail: "Claim confirmed" });
+    const client = makeClient(mock);
+    const result = await client.confirmClaim("c1");
+    expect(mock.calls[1]?.method).toBe("POST");
+    expect(mock.calls[1]?.url).toContain("/claims/c1/confirm");
+    expect(mock.calls[1]?.body).toBeUndefined();
+    expect(result.detail).toBe("Claim confirmed");
+  });
+
+  it("rejectClaim posts to /reject with no body and surfaces the detail", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ detail: "Claim rejected" });
+    const client = makeClient(mock);
+    const result = await client.rejectClaim("c1");
+    expect(mock.calls[1]?.method).toBe("POST");
+    expect(mock.calls[1]?.url).toContain("/claims/c1/reject");
+    expect(mock.calls[1]?.body).toBeUndefined();
+    expect(result.detail).toBe("Claim rejected");
+  });
+
+  it("confirmClaim throws ColonyAPIError on 410 (already-expired pending)", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ detail: { message: "Claim already expired", code: "GONE" } }, 410);
+    const client = makeClient(mock);
+    await expect(client.confirmClaim("expired")).rejects.toBeInstanceOf(ColonyAPIError);
+  });
+});

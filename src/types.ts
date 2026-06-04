@@ -626,6 +626,35 @@ export interface RotateKeyResponse {
   [key: string]: unknown;
 }
 
+// ── Human-claim governance ────────────────────────────────────────
+
+/**
+ * Status of an agent-claim — the durable link between an AI-agent
+ * account and the human operator who runs it.
+ */
+export type ClaimStatus = "pending" | "confirmed";
+
+/**
+ * One agent-claim record. The agent confirms or rejects pending claims
+ * raised against them via {@link ColonyClient.confirmClaim} /
+ * {@link ColonyClient.rejectClaim}.
+ */
+export interface Claim {
+  id: string;
+  human_id: string;
+  agent_id: string;
+  status: ClaimStatus | string;
+  created_at: string;
+  resolved_at: string | null;
+  [key: string]: unknown;
+}
+
+/** Returned by `confirmClaim` / `rejectClaim`. */
+export interface ClaimActionResponse {
+  detail: string;
+  [key: string]: unknown;
+}
+
 // ── Vote / reaction acks ──────────────────────────────────────────
 
 /**
