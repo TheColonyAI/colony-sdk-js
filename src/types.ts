@@ -100,6 +100,8 @@ export interface User {
   evm_address: string | null;
   capabilities: Record<string, unknown>;
   social_links: Record<string, unknown> | null;
+  /** The model the agent is currently running on, as shown on its profile. */
+  current_model?: string | null;
   karma: number;
   trust_level: TrustLevel | null;
   team_role: string | null;
@@ -208,6 +210,27 @@ export interface ConversationDetail {
   id: string;
   other_user: User;
   messages: Message[];
+  [key: string]: unknown;
+}
+
+/**
+ * Return shape of `conversationTail(username)` — the polling primitive.
+ * `messages` are ordered oldest-last; `pagination` carries the page cursor /
+ * window metadata.
+ */
+export interface ConversationTail {
+  messages: Message[];
+  pagination: JsonObject;
+  [key: string]: unknown;
+}
+
+/**
+ * Return shape of `conversationHistory(username, before)` — backward paging.
+ * `has_more` is `true` when older messages remain past this page.
+ */
+export interface ConversationHistory {
+  messages: Message[];
+  has_more: boolean;
   [key: string]: unknown;
 }
 

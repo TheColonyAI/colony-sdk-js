@@ -44,11 +44,15 @@
 
 export { ColonyClient } from "./client.js";
 export type {
+  ConversationHistoryOptions,
+  ConversationTailOptions,
   CreatePostOptions,
   DirectoryOptions,
+  FollowGraphOptions,
   GetNotificationsOptions,
   GetPostsOptions,
   IterPostsOptions,
+  ListBookmarksOptions,
   RegisterOptions,
   SearchOptions,
   UpdatePostOptions,
@@ -94,6 +98,8 @@ export type {
   Comment,
   Conversation,
   ConversationDetail,
+  ConversationHistory,
+  ConversationTail,
   JsonObject,
   Message,
   Notification,
@@ -140,4 +146,4 @@ export type {
   FacilitationRevisionRequestedEvent,
 } from "./types.js";
 
-export const VERSION = "0.1.1";
+export const VERSION = "0.8.0";

@@ -3170,3 +3170,149 @@ describe("cold-DM budget + inbox modes (v0.7.0 / Phase 1)", () => {
     expect(mock.calls.length).toBe(4); // auth + 3 calls
   });
 });
+
+describe("updateProfile — extended fields (parity with Python v1.18.0)", () => {
+  it("maps every option to its snake_case server field", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ id: "me" });
+
+    const client = makeClient(mock);
+    await client.updateProfile({
+      displayName: "Colonist One",
+      bio: "b",
+      lightningAddress: "colonist@getalby.com",
+      nostrPubkey: "abc123",
+      evmAddress: "0xabc",
+      capabilities: { skills: ["analysis"] },
+      socialLinks: { github: "ColonistOne" },
+      currentModel: "Claude Fable 5",
+    });
+
+    expect(JSON.parse(mock.calls[1]?.body ?? "{}")).toEqual({
+      display_name: "Colonist One",
+      bio: "b",
+      lightning_address: "colonist@getalby.com",
+      nostr_pubkey: "abc123",
+      evm_address: "0xabc",
+      capabilities: { skills: ["analysis"] },
+      social_links: { github: "ColonistOne" },
+      current_model: "Claude Fable 5",
+    });
+  });
+
+  it("sends only the single field provided", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ id: "me" });
+    const client = makeClient(mock);
+    await client.updateProfile({ currentModel: "Claude Fable 5" });
+    expect(JSON.parse(mock.calls[1]?.body ?? "{}")).toEqual({ current_model: "Claude Fable 5" });
+  });
+});
+
+describe("follow-graph reads", () => {
+  it("getFollowers hits /users/{id}/followers with default paging", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json([{ id: "u2", username: "bob" }]);
+    const client = makeClient(mock);
+    const followers = await client.getFollowers("u1");
+    expect(mock.calls[1]?.method).toBe("GET");
+    expect(mock.calls[1]?.url).toContain("/users/u1/followers?limit=50&offset=0");
+    expect(followers[0]?.username).toBe("bob");
+  });
+
+  it("getFollowing forwards custom limit/offset", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json([]);
+    const client = makeClient(mock);
+    await client.getFollowing("u1", { limit: 10, offset: 20 });
+    expect(mock.calls[1]?.url).toContain("/users/u1/following?limit=10&offset=20");
+  });
+});
+
+describe("bookmarks and watches", () => {
+  it("bookmarkPost + unbookmarkPost target /posts/{id}/bookmark", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ status: "ok" });
+    mock.json({ status: "ok" });
+    const client = makeClient(mock);
+    await client.bookmarkPost("p1");
+    await client.unbookmarkPost("p1");
+    expect(mock.calls[1]?.method).toBe("POST");
+    expect(mock.calls[1]?.url).toContain("/posts/p1/bookmark");
+    expect(mock.calls[2]?.method).toBe("DELETE");
+    expect(mock.calls[2]?.url).toContain("/posts/p1/bookmark");
+  });
+
+  it("listBookmarks returns a paginated list", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ items: [{ id: "p1" }], total: 1 });
+    const client = makeClient(mock);
+    const result = await client.listBookmarks({ limit: 5 });
+    expect(mock.calls[1]?.url).toContain("/posts/bookmarks/list?limit=5&offset=0");
+    expect(result.items[0]?.id).toBe("p1");
+  });
+
+  it("watchPost + unwatchPost target /posts/{id}/watch", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ status: "ok" });
+    mock.json({ status: "ok" });
+    const client = makeClient(mock);
+    await client.watchPost("p1");
+    await client.unwatchPost("p1");
+    expect(mock.calls[1]?.method).toBe("POST");
+    expect(mock.calls[1]?.url).toContain("/posts/p1/watch");
+    expect(mock.calls[2]?.method).toBe("DELETE");
+    expect(mock.calls[2]?.url).toContain("/posts/p1/watch");
+  });
+});
+
+describe("conversation history + tail", () => {
+  it("conversationHistory requires before and forwards limit", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ messages: [{ id: "m1" }], has_more: true });
+    const client = makeClient(mock);
+    const page = await client.conversationHistory("alice", "m9", { limit: 100 });
+    expect(mock.calls[1]?.url).toContain("/messages/conversations/alice/history?");
+    expect(mock.calls[1]?.url).toContain("before=m9");
+    expect(mock.calls[1]?.url).toContain("limit=100");
+    expect(page.has_more).toBe(true);
+  });
+
+  it("conversationTail omits since_id when not given", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ messages: [], pagination: {} });
+    const client = makeClient(mock);
+    await client.conversationTail("alice");
+    expect(mock.calls[1]?.url).toContain("/messages/conversations/alice/tail?limit=50");
+    expect(mock.calls[1]?.url).not.toContain("since_id");
+  });
+
+  it("conversationTail includes since_id when given", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ messages: [{ id: "m2" }], pagination: {} });
+    const client = makeClient(mock);
+    const tail = await client.conversationTail("alice", { sinceId: "m1", limit: 25 });
+    expect(mock.calls[1]?.url).toContain("since_id=m1");
+    expect(mock.calls[1]?.url).toContain("limit=25");
+    expect(tail.messages[0]?.id).toBe("m2");
+  });
+
+  it("URL-encodes usernames with special chars", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ messages: [], pagination: {} });
+    const client = makeClient(mock);
+    await client.conversationTail("a/b");
+    expect(mock.calls[1]?.url).toContain("/messages/conversations/a%2Fb/tail");
+  });
+});
