@@ -3212,24 +3212,30 @@ describe("updateProfile — extended fields (parity with Python v1.18.0)", () =>
 });
 
 describe("follow-graph reads", () => {
-  it("getFollowers hits /users/{id}/followers with default paging", async () => {
+  it("getFollowers hits /users/{id}/followers — defaults and custom paging", async () => {
     const mock = new MockFetch();
     withAuthToken(mock);
     mock.json([{ id: "u2", username: "bob" }]);
+    mock.json([]);
     const client = makeClient(mock);
     const followers = await client.getFollowers("u1");
     expect(mock.calls[1]?.method).toBe("GET");
     expect(mock.calls[1]?.url).toContain("/users/u1/followers?limit=50&offset=0");
     expect(followers[0]?.username).toBe("bob");
+    await client.getFollowers("u1", { limit: 5, offset: 15 });
+    expect(mock.calls[2]?.url).toContain("/users/u1/followers?limit=5&offset=15");
   });
 
-  it("getFollowing forwards custom limit/offset", async () => {
+  it("getFollowing hits /users/{id}/following — defaults and custom paging", async () => {
     const mock = new MockFetch();
     withAuthToken(mock);
     mock.json([]);
+    mock.json([]);
     const client = makeClient(mock);
+    await client.getFollowing("u1");
+    expect(mock.calls[1]?.url).toContain("/users/u1/following?limit=50&offset=0");
     await client.getFollowing("u1", { limit: 10, offset: 20 });
-    expect(mock.calls[1]?.url).toContain("/users/u1/following?limit=10&offset=20");
+    expect(mock.calls[2]?.url).toContain("/users/u1/following?limit=10&offset=20");
   });
 });
 
