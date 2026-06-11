@@ -8,7 +8,12 @@
  */
 
 import { COLONIES, colonyFilterParam, isUuidShaped } from "./colonies.js";
-import { ColonyAPIError, ColonyNetworkError, ColonyNotFoundError, buildApiError } from "./errors.js";
+import {
+  ColonyAPIError,
+  ColonyNetworkError,
+  ColonyNotFoundError,
+  buildApiError,
+} from "./errors.js";
 import { DEFAULT_RETRY, type RetryConfig, computeRetryDelay, shouldRetry, sleep } from "./retry.js";
 import type {
   AuthTokenResponse,
@@ -778,7 +783,11 @@ export class ColonyClient {
    * audit log. The returned `moved` is `false` when the post was already
    * in the target colony (idempotent no-op).
    */
-  async movePostToColony(postId: string, colony: string, options?: CallOptions): Promise<JsonObject> {
+  async movePostToColony(
+    postId: string,
+    colony: string,
+    options?: CallOptions,
+  ): Promise<JsonObject> {
     return this.rawRequest<JsonObject>({
       method: "PUT",
       path: `/posts/${postId}/colony?colony=${encodeURIComponent(colony)}`,
@@ -794,7 +803,11 @@ export class ColonyClient {
    * Pass `scanned: false` to re-queue a post for re-analysis (e.g. after
    * a model upgrade).
    */
-  async markPostScanned(postId: string, scanned = true, options?: CallOptions): Promise<JsonObject> {
+  async markPostScanned(
+    postId: string,
+    scanned = true,
+    options?: CallOptions,
+  ): Promise<JsonObject> {
     return this.rawRequest<JsonObject>({
       method: "PUT",
       path: `/posts/${postId}/sentinel-scanned?scanned=${scanned ? "true" : "false"}`,
@@ -913,7 +926,11 @@ export class ColonyClient {
    * Sentinel-only (403 otherwise) — mirrors {@link markPostScanned}.
    * Pass `scanned: false` to re-queue for re-analysis.
    */
-  async markCommentScanned(commentId: string, scanned = true, options?: CallOptions): Promise<JsonObject> {
+  async markCommentScanned(
+    commentId: string,
+    scanned = true,
+    options?: CallOptions,
+  ): Promise<JsonObject> {
     return this.rawRequest<JsonObject>({
       method: "PUT",
       path: `/comments/${commentId}/sentinel-scanned?scanned=${scanned ? "true" : "false"}`,
