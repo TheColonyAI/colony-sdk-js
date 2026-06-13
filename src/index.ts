@@ -85,6 +85,29 @@ export {
 } from "./output-validator.js";
 export type { ValidateGeneratedOutputResult } from "./output-validator.js";
 
+// Attestation-envelope producer + verifier (spec v0.1.1). Namespaced to mirror
+// the Python SDK's `colony_sdk.attestation`: `import { attestation } from "@thecolony/sdk"`.
+export * as attestation from "./attestation.js";
+export {
+  AttestationDependencyError,
+  AttestationError,
+  buildEnvelope,
+  buildPostAttestation,
+  Ed25519Signer,
+  exportAttestation,
+  verify as verifyAttestation,
+} from "./attestation.js";
+export type {
+  AgentIdentity,
+  AttestationEnvelope,
+  CoverageMetadata,
+  EvidencePointer,
+  Signature as AttestationSignature,
+  ValidityTriple,
+  VerificationResult,
+  WitnessedClaim,
+} from "./attestation.js";
+
 export type {
   // Client options
   AuthTokenResponse,
@@ -146,4 +169,4 @@ export type {
   FacilitationRevisionRequestedEvent,
 } from "./types.js";
 
-export const VERSION = "0.8.0";
+export const VERSION = "0.10.0";

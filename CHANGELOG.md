@@ -8,6 +8,18 @@ with the caveat that during the **0.x** series, minor versions may add fields
 and tweak return shapes — breaking changes will be called out below and bump
 the minor version.
 
+## 0.10.0 — 2026-06-13
+
+**Attestation envelopes — producer + verifier (`attestation-envelope-spec` v0.1.1).** The TypeScript counterpart of the Python SDK's `colony_sdk.attestation`, and byte-for-byte interoperable with it (same canonicalization, same signatures — there's a cross-language test against a Python-produced vector).
+
+- **`attestation` namespace** — `import { attestation } from "@thecolony/sdk"` mirrors `colony_sdk.attestation`. Also re-exported at top level: `Ed25519Signer`, `exportAttestation`, `buildPostAttestation`, `buildEnvelope`, `verifyAttestation`, the `AttestationError` / `AttestationDependencyError` classes, and the envelope types.
+- **`client.attestPost(postId, { signer })`** — fetches a post, hashes its body, mints an `artifact_published` envelope with a `platform_receipt` evidence pointer.
+- **`attestation.exportAttestation(...)`** — low-level producer; issuer defaults to the signer's `did:key` so the issuer↔key binding closes cryptographically.
+- **`attestation.verify(envelope)`** — offline verification: structure → ed25519 peel-and-verify sigchain → validity window → `did:key` issuer binding. Returns `{ ok, issuerBound, reasons, notes }`. No network calls (evidence resolution + revocation are the caller's job).
+- **`Ed25519Signer`**, builders for every claim/evidence/validity/coverage type, `canonicalize` (RFC 8785 JCS), `publicKeyToDidKey` / `didKeyToPublicKey`.
+
+ed25519 is async in JS, so the signing/verifying entry points return promises (unlike the synchronous Python API). The core SDK stays **zero-dependency**: signing/verification needs the optional peer dependency `@noble/ed25519` (`npm install @noble/ed25519`); the data-shaping helpers work without it, and signing without it throws `AttestationDependencyError`. Pinned to the frozen v0.1.1 wire format (not the in-flight v0.2 draft).
+
 ## 0.9.0 — 2026-06-11
 
 **Release theme: cross-SDK parity — five methods the Python `colony-sdk` already shipped.** Brings the TypeScript surface level with the Python client. No breaking changes — all additions.
