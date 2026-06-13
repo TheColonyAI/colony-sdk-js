@@ -26,6 +26,28 @@ function fixedSigner(): att.Ed25519Signer {
   return att.Ed25519Signer.fromSeed(FIXED_SEED);
 }
 
+// Minimal base58btc encoder, test-only, to craft malformed did:key inputs the
+// public API can't otherwise produce (wrong multicodec / wrong key length).
+function b58(bytes: number[]): string {
+  const A = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+  const digits: number[] = [];
+  for (const byte of bytes) {
+    let carry = byte;
+    for (let j = 0; j < digits.length; j++) {
+      carry += digits[j]! << 8;
+      digits[j] = carry % 58;
+      carry = (carry / 58) | 0;
+    }
+    while (carry > 0) {
+      digits.push(carry % 58);
+      carry = (carry / 58) | 0;
+    }
+  }
+  let out = "";
+  for (let i = digits.length - 1; i >= 0; i--) out += A[digits[i]!];
+  return out;
+}
+
 async function validEnvelope(
   overrides: Partial<att.ExportAttestationOptions> = {},
 ): Promise<att.AttestationEnvelope> {
@@ -119,12 +141,18 @@ describe("Ed25519Signer + did:key", () => {
     const pub = await fixedSigner().getPublicKey();
     expect(Buffer.from(att.didKeyToPublicKey(PY_DID_KEY)).equals(Buffer.from(pub))).toBe(true);
   });
-  it("didKeyToPublicKey rejects non-did:key, bad multicodec, bad char, leading-zero payload", () => {
+  it("didKeyToPublicKey rejects every malformed shape", () => {
     expect(() => att.didKeyToPublicKey("did:web:example.com")).toThrow(/did:key/);
     expect(() => att.didKeyToPublicKey("did:key:z0Il")).toThrow(/invalid base58 character/); // 0,I,l illegal
-    expect(() => att.didKeyToPublicKey("did:key:z1z")).toThrow(/multicodec/); // leading '1' → 0x00 prefix
-    // valid base58 but not ed25519 multicodec
-    expect(() => att.didKeyToPublicKey("did:key:zABCDEFG")).toThrow(/multicodec|32 bytes/);
+    expect(() => att.didKeyToPublicKey("did:key:z" + b58([0x00]))).toThrow(/multicodec/); // <2 bytes
+    expect(() => att.didKeyToPublicKey("did:key:z" + b58([0x99, 0x01, 1, 2]))).toThrow(
+      /multicodec/,
+    ); // byte0 ≠ 0xed
+    expect(() => att.didKeyToPublicKey("did:key:z" + b58([0xed, 0x99, 1, 2]))).toThrow(
+      /multicodec/,
+    ); // byte1 ≠ 0x01
+    const shortPub = [0xed, 0x01, ...new Array(31).fill(7)];
+    expect(() => att.didKeyToPublicKey("did:key:z" + b58(shortPub))).toThrow(/32 bytes/); // valid prefix, wrong length
   });
 });
 
@@ -340,6 +368,35 @@ describe("verify", () => {
     const t5 = await validEnvelope();
     t5.sigchain[0]!.key_id = "not-a-did-key";
     expect((await att.verify(t5)).reasons.some((r) => r.includes("not a resolvable"))).toBe(true);
+  });
+  it("handles missing key_id / missing sig / non-object entry / role-less verified entry", async () => {
+    // missing key_id → `?? ""` → not resolvable
+    const m1 = await validEnvelope();
+    delete (m1.sigchain[0] as unknown as Record<string, unknown>).key_id;
+    expect((await att.verify(m1)).reasons.some((r) => r.includes("not a resolvable"))).toBe(true);
+    // missing sig (valid key_id) → `?? ""` → does not verify
+    const m2 = await validEnvelope();
+    delete (m2.sigchain[0] as unknown as Record<string, unknown>).sig;
+    expect((await att.verify(m2)).reasons.some((r) => r.includes("does not verify"))).toBe(true);
+    // non-object sigchain entry → entry guard
+    const m3 = await validEnvelope();
+    (m3 as unknown as Record<string, unknown>).sigchain = [null];
+    expect(
+      (await att.verify(m3)).reasons.some((r) => r.includes("unsupported or missing alg")),
+    ).toBe(true);
+    // role-less but valid entry → notes "?" branch, still ok
+    const m4 = await att.buildEnvelope({
+      issuer: att.didKeyIdentity(PY_DID_KEY),
+      subject: att.didKeyIdentity(PY_DID_KEY),
+      witnessedClaim: att.artifactPublished("https://x", "sha256:" + "0".repeat(64)),
+      evidence: [att.evidenceImmutableUri("https://x")],
+      validity: att.validityPerpetual("2026-01-01T00:00:00Z", "2030-01-01T00:00:00Z"),
+      signer: fixedSigner(),
+      role: null,
+    });
+    const m4res = await att.verify(m4);
+    expect(m4res.ok).toBe(true);
+    expect(m4res.notes.some((n) => n.includes("(?)"))).toBe(true);
   });
   it("validity: perpetual, expired, not-yet-valid, unparseable, revocation, unknown, non-object", async () => {
     expect(

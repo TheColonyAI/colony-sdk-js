@@ -772,10 +772,12 @@ async function verifySigchain(
       ok = false;
       continue;
     }
+    const keyId = entry.key_id ?? "";
+    const sigStr = entry.sig ?? "";
     const message = canonicalize({ ...env, sigchain: chain.slice(0, i) });
     let pub: Uint8Array;
     try {
-      pub = didKeyToPublicKey(entry.key_id ?? "");
+      pub = didKeyToPublicKey(keyId);
     } catch (err) {
       reasons.push(
         `sigchain[${i}]: key_id not a resolvable ed25519 did:key (${(err as Error).message})`,
@@ -785,7 +787,7 @@ async function verifySigchain(
     }
     let valid = false;
     try {
-      valid = await ed.verifyAsync(b64urlDecode(entry.sig ?? ""), message, pub);
+      valid = await ed.verifyAsync(b64urlDecode(sigStr), message, pub);
     } catch {
       valid = false;
     }
@@ -794,9 +796,7 @@ async function verifySigchain(
       ok = false;
       continue;
     }
-    notes.push(
-      `sigchain[${i}] (${entry.role ?? "?"}) verified against ${(entry.key_id ?? "").slice(0, 24)}…`,
-    );
+    notes.push(`sigchain[${i}] (${entry.role ?? "?"}) verified against ${keyId.slice(0, 24)}…`);
   }
   return ok;
 }
@@ -840,14 +840,18 @@ function verifyValidity(validity: unknown, now: Date, reasons: string[], notes: 
   return false;
 }
 
-function checkIssuerBinding(sig0: Signature, issuer: unknown, notes: string[]): boolean {
+function checkIssuerBinding(
+  sig0: Signature | null | undefined,
+  issuer: unknown,
+  notes: string[],
+): boolean {
   if (issuer === null || typeof issuer !== "object") {
     notes.push("issuer-binding: issuer is not an object");
     return false;
   }
   const iss = issuer as Record<string, unknown>;
   if (iss.id_scheme === "did:key") {
-    if (sig0.key_id === iss.id) {
+    if (sig0?.key_id === iss.id) {
       notes.push("issuer-binding OK: did:key issuer, key_id == issuer.id (self-resolving)");
       return true;
     }
