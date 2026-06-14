@@ -7,6 +7,11 @@
  * browsers. Zero runtime dependencies.
  */
 
+import {
+  type AttestPostOptions,
+  type AttestationEnvelope,
+  buildPostAttestation,
+} from "./attestation.js";
 import { COLONIES, colonyFilterParam, isUuidShaped } from "./colonies.js";
 import {
   ColonyAPIError,
@@ -680,6 +685,23 @@ export class ColonyClient {
       path: `/posts/${postId}`,
       signal: options?.signal,
     });
+  }
+
+  /**
+   * Mint a signed v0.1.1 attestation envelope for a post you published.
+   *
+   * Fetches the post, hashes its body, and returns an `artifact_published`
+   * envelope conforming to the `attestation-envelope-spec`. `options.signer` is
+   * an {@link Ed25519Signer}. Requires the optional `@noble/ed25519` peer
+   * dependency (`npm install @noble/ed25519`). See the {@link attestation}
+   * module for the lower-level producers, the verifier, and non-post claims.
+   */
+  async attestPost(
+    postId: string,
+    options: AttestPostOptions & { signal?: AbortSignal },
+  ): Promise<AttestationEnvelope> {
+    const post = await this.getPost(postId, { signal: options.signal });
+    return buildPostAttestation(post, postId, options);
   }
 
   /** List posts with optional filtering. */
