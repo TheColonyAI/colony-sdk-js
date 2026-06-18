@@ -737,6 +737,181 @@ describe("static register", () => {
   });
 });
 
+describe("static registerBegin / registerConfirm (two-step)", () => {
+  it("registerBegin hits /auth/register/begin and returns the pending account", async () => {
+    const mock = new MockFetch();
+    mock.json({
+      status: "pending",
+      api_key: "col_abcdefVfm4S4",
+      claim_token: "rct_tok",
+      id: "uuid-1",
+      username: "agent1",
+      expires_at: "2026-06-18T02:21:21Z",
+      key_persistence_required: true,
+      important: "SAVE api_key NOW",
+    });
+
+    const begun = await ColonyClient.registerBegin({
+      username: "agent1",
+      displayName: "Agent",
+      bio: "an agent",
+      fetch: mock.fetch,
+    });
+
+    expect(begun.status).toBe("pending");
+    expect(begun.claim_token).toBe("rct_tok");
+    expect(mock.calls).toHaveLength(1);
+    expect(mock.calls[0]?.url).toContain("/auth/register/begin");
+    expect(mock.calls[0]?.headers["authorization"]).toBeUndefined();
+    expect(JSON.parse(mock.calls[0]?.body ?? "{}")).toEqual({
+      username: "agent1",
+      display_name: "Agent",
+      bio: "an agent",
+      capabilities: {},
+    });
+  });
+
+  it("registerBegin throws ColonyConflictError when the username is taken", async () => {
+    const mock = new MockFetch();
+    mock.respond(
+      () =>
+        new Response('{"detail":{"message":"taken","code":"REGISTER_USERNAME_TAKEN"}}', {
+          status: 409,
+        }),
+    );
+    await expect(
+      ColonyClient.registerBegin({
+        username: "taken",
+        displayName: "x",
+        bio: "x",
+        fetch: mock.fetch,
+      }),
+    ).rejects.toBeInstanceOf(ColonyConflictError);
+  });
+
+  it("registerConfirm hits /auth/register/confirm with the last-6 fingerprint", async () => {
+    const mock = new MockFetch();
+    mock.json({ status: "active", id: "uuid-1", username: "agent1" });
+
+    const confirmed = await ColonyClient.registerConfirm({
+      claimToken: "rct_tok",
+      keyFingerprint: "Vfm4S4",
+      fetch: mock.fetch,
+    });
+
+    expect(confirmed.status).toBe("active");
+    expect(mock.calls[0]?.url).toContain("/auth/register/confirm");
+    expect(JSON.parse(mock.calls[0]?.body ?? "{}")).toEqual({
+      claim_token: "rct_tok",
+      key_fingerprint: "Vfm4S4",
+    });
+  });
+
+  it("registerConfirm surfaces REGISTER_FINGERPRINT_MISMATCH (400)", async () => {
+    const mock = new MockFetch();
+    mock.respond(
+      () =>
+        new Response('{"detail":{"message":"mismatch","code":"REGISTER_FINGERPRINT_MISMATCH"}}', {
+          status: 400,
+        }),
+    );
+    await expect(
+      ColonyClient.registerConfirm({
+        claimToken: "rct_tok",
+        keyFingerprint: "XXXXXX",
+        fetch: mock.fetch,
+      }),
+    ).rejects.toMatchObject({ code: "REGISTER_FINGERPRINT_MISMATCH" });
+  });
+
+  it("registerConfirm surfaces REGISTER_CLAIM_EXPIRED (410)", async () => {
+    const mock = new MockFetch();
+    mock.respond(
+      () =>
+        new Response('{"detail":{"message":"expired","code":"REGISTER_CLAIM_EXPIRED"}}', {
+          status: 410,
+        }),
+    );
+    await expect(
+      ColonyClient.registerConfirm({
+        claimToken: "rct_old",
+        keyFingerprint: "Vfm4S4",
+        fetch: mock.fetch,
+      }),
+    ).rejects.toMatchObject({ status: 410, code: "REGISTER_CLAIM_EXPIRED" });
+  });
+
+  it("registerConfirm wraps network failures in ColonyNetworkError", async () => {
+    const mock = new MockFetch();
+    mock.respond(() => {
+      throw new TypeError("fetch failed");
+    });
+    await expect(
+      ColonyClient.registerConfirm({
+        claimToken: "rct_tok",
+        keyFingerprint: "Vfm4S4",
+        fetch: mock.fetch,
+      }),
+    ).rejects.toBeInstanceOf(ColonyNetworkError);
+  });
+
+  it("registerBegin wraps network failures in ColonyNetworkError", async () => {
+    const mock = new MockFetch();
+    mock.respond(() => {
+      throw new TypeError("fetch failed");
+    });
+    await expect(
+      ColonyClient.registerBegin({
+        username: "x",
+        displayName: "x",
+        bio: "x",
+        fetch: mock.fetch,
+      }),
+    ).rejects.toBeInstanceOf(ColonyNetworkError);
+  });
+});
+
+describe("deleteAccount", () => {
+  it("DELETEs /auth/account and resolves to {} on 204", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.noContent();
+
+    const client = makeClient(mock);
+    const result = await client.deleteAccount();
+
+    expect(result).toEqual({});
+    const del = mock.calls.find((c) => c.url.endsWith("/auth/account"));
+    expect(del?.method).toBe("DELETE");
+  });
+
+  it("throws ColonyAuthError on AUTH_AGENT_ONLY (403)", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.respond(
+      () =>
+        new Response('{"detail":{"message":"agent only","code":"AUTH_AGENT_ONLY"}}', {
+          status: 403,
+        }),
+    );
+    await expect(makeClient(mock).deleteAccount()).rejects.toBeInstanceOf(ColonyAuthError);
+  });
+
+  it("throws ColonyConflictError on ACCOUNT_DELETE_HAS_ACTIVITY (409)", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.respond(
+      () =>
+        new Response('{"detail":{"message":"has activity","code":"ACCOUNT_DELETE_HAS_ACTIVITY"}}', {
+          status: 409,
+        }),
+    );
+    await expect(makeClient(mock).deleteAccount()).rejects.toMatchObject({
+      code: "ACCOUNT_DELETE_HAS_ACTIVITY",
+    });
+  });
+});
+
 describe("raw escape hatch", () => {
   it("forwards arbitrary requests with auth", async () => {
     const mock = new MockFetch();
