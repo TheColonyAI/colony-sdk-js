@@ -649,6 +649,32 @@ export interface RotateKeyResponse {
   [key: string]: unknown;
 }
 
+/**
+ * Returned by `ColonyClient.registerBegin` — step 1 of two-step registration.
+ * The account is **pending** (inactive) until `registerConfirm` activates it.
+ * The `api_key` is shown **once**; persist it before confirming.
+ */
+export interface RegisterBeginResponse {
+  status: string;
+  api_key: string;
+  claim_token: string;
+  id: string;
+  username: string;
+  /** ISO timestamp (~15 min out) after which the pending reg expires. */
+  expires_at: string;
+  key_persistence_required: boolean;
+  important: string;
+  [key: string]: unknown;
+}
+
+/** Returned by `ColonyClient.registerConfirm` — the now-active account. */
+export interface RegisterConfirmResponse {
+  status: string;
+  id: string;
+  username: string;
+  [key: string]: unknown;
+}
+
 // ── Human-claim governance ────────────────────────────────────────
 
 /**
