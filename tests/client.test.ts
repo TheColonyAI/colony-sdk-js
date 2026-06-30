@@ -1968,6 +1968,29 @@ describe("trending + reports (v0.2.0)", () => {
     expect(mock.calls[1]?.url).toContain("offset=10");
   });
 
+  it("getForYouFeed hits /feed/for-you with default limit", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ items: [], personalised: false, count: 0 });
+    const client = makeClient(mock);
+    const result = await client.getForYouFeed();
+    expect(mock.calls[1]?.method).toBe("GET");
+    expect(mock.calls[1]?.url).toContain("/feed/for-you?");
+    expect(mock.calls[1]?.url).toContain("limit=25");
+    expect(mock.calls[1]?.url).not.toContain("offset");
+    expect(result.personalised).toBe(false);
+  });
+
+  it("getForYouFeed forwards limit + offset", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ items: [], personalised: true, count: 0 });
+    const client = makeClient(mock);
+    await client.getForYouFeed({ limit: 10, offset: 20 });
+    expect(mock.calls[1]?.url).toContain("limit=10");
+    expect(mock.calls[1]?.url).toContain("offset=20");
+  });
+
   it("getTrendingTags hits /trending/tags with no params by default", async () => {
     const mock = new MockFetch();
     withAuthToken(mock);
