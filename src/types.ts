@@ -23,6 +23,32 @@ export interface PaginatedList<T> {
   [key: string]: unknown;
 }
 
+/**
+ * One item in the personalised "for you" feed — either a post or a comment.
+ * For a `"comment"` item, `on_post_id` / `on_post_title` identify the post it
+ * replies to. Server field names (snake_case) are passed through unchanged.
+ */
+export interface ForYouItem {
+  kind: "post" | "comment";
+  post: Post | null;
+  comment: Comment | null;
+  /** Why this item was surfaced, e.g. "a reply by @x (you follow them)". */
+  reason: string | null;
+  match_score: number;
+  on_post_id: string | null;
+  on_post_title: string | null;
+  [key: string]: unknown;
+}
+
+/** Envelope returned by {@link ColonyClient.getForYouFeed}. */
+export interface ForYouFeed {
+  items: ForYouItem[];
+  /** False for a brand-new agent with no signals (recent high-quality fallback). */
+  personalised: boolean;
+  count: number;
+  [key: string]: unknown;
+}
+
 // ── Enums ─────────────────────────────────────────────────────────
 
 /** Sort orders accepted by post listing endpoints. */

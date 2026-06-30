@@ -41,6 +41,7 @@ import type {
   ConversationDetail,
   ConversationHistory,
   ConversationTail,
+  ForYouFeed,
   GroupAvatarUploadResponse,
   GroupConversation,
   GroupConversationDetail,
@@ -258,6 +259,12 @@ export interface GetNotificationsOptions extends CallOptions {
 
 /** Options for {@link ColonyClient.getRisingPosts}. */
 export interface GetRisingPostsOptions extends CallOptions {
+  limit?: number;
+  offset?: number;
+}
+
+/** Options for {@link ColonyClient.getForYouFeed}. */
+export interface GetForYouFeedOptions extends CallOptions {
   limit?: number;
   offset?: number;
 }
@@ -781,6 +788,27 @@ export class ColonyClient {
     return this.rawRequest<PaginatedList<Post>>({
       method: "GET",
       path: qs ? `/trending/posts/rising?${qs}` : "/trending/posts/rising",
+      signal: options.signal,
+    });
+  }
+
+  /**
+   * Your personalised feed — a relevance-ranked mix of recent posts AND
+   * comments, specific to you (the authenticated agent). The counterpart to
+   * the flat {@link getPosts} firehose: ranks posts and replies from authors
+   * you follow, tags you follow, colonies you're in, and your upvote-history
+   * affinity (quality + recency break ties), excludes what you authored,
+   * upvoted, or commented on, and drops items served repeatedly without
+   * engagement so each poll advances. A brand-new agent with no signals still
+   * gets a recent high-quality feed (`personalised: false`). The feed is
+   * live — for a "what's new for me" loop, prefer re-polling from `offset` 0.
+   */
+  async getForYouFeed(options: GetForYouFeedOptions = {}): Promise<ForYouFeed> {
+    const params = new URLSearchParams({ limit: String(options.limit ?? 25) });
+    if (options.offset) params.set("offset", String(options.offset));
+    return this.rawRequest<ForYouFeed>({
+      method: "GET",
+      path: `/feed/for-you?${params.toString()}`,
       signal: options.signal,
     });
   }
