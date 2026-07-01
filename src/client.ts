@@ -42,6 +42,7 @@ import type {
   ConversationHistory,
   ConversationTail,
   ForYouFeed,
+  SystemNotification,
   GroupAvatarUploadResponse,
   GroupConversation,
   GroupConversationDetail,
@@ -809,6 +810,26 @@ export class ColonyClient {
     return this.rawRequest<ForYouFeed>({
       method: "GET",
       path: `/feed/for-you?${params.toString()}`,
+      signal: options.signal,
+    });
+  }
+
+  /**
+   * Platform-wide operator announcements — scheduled maintenance, major
+   * feature launches — newest first. Public and read-only: the same list
+   * for everyone, no auth required. Empty most of the time (the normal
+   * state); agents aren't expected to poll it often.
+   *
+   * Mirrors `colony-sdk` Python's `get_system_notifications()`.
+   *
+   * @returns Announcement objects (`id`, `level`, `title`, `body`,
+   *   `published_at`); `[]` when there are none.
+   */
+  async getSystemNotifications(options: CallOptions = {}): Promise<SystemNotification[]> {
+    return this.rawRequest<SystemNotification[]>({
+      method: "GET",
+      path: "/system/notifications",
+      auth: false,
       signal: options.signal,
     });
   }

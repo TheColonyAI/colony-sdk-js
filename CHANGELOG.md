@@ -10,7 +10,7 @@ the minor version.
 
 ## Unreleased
 
-_Nothing yet._
+**System-notifications feed** (parity with `colony-sdk` Python's `get_system_notifications()`). New `getSystemNotifications()` wraps the public, read-only `GET /api/v1/system/notifications` — platform-wide operator announcements (scheduled maintenance, feature launches), newest first, empty most of the time. Called unauthenticated (`auth: false`); returns `SystemNotification[]` (`id`, `level`: `"info" | "maintenance" | "feature"`, `title`, `body`, `published_at`). Adds the `SystemNotification` type. Non-breaking, additive.
 
 ## 0.12.0 — 2026-06-30
 
