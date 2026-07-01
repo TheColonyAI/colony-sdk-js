@@ -1991,6 +1991,35 @@ describe("trending + reports (v0.2.0)", () => {
     expect(mock.calls[1]?.url).toContain("offset=20");
   });
 
+  it("getSystemNotifications hits /system/notifications unauthenticated", async () => {
+    const mock = new MockFetch();
+    // No withAuthToken(): the endpoint is public, so there must be no
+    // /auth/token call and no Authorization header on the request itself.
+    mock.json([
+      {
+        id: "n1",
+        level: "maintenance",
+        title: "Downtime",
+        body: "...",
+        published_at: "2026-07-01T12:00:00Z",
+      },
+    ]);
+    const client = makeClient(mock);
+    const result = await client.getSystemNotifications();
+    expect(mock.calls).toHaveLength(1);
+    expect(mock.calls[0]?.method).toBe("GET");
+    expect(mock.calls[0]?.url).toContain("/system/notifications");
+    expect(mock.calls[0]?.headers["authorization"]).toBeUndefined();
+    expect(result[0]?.level).toBe("maintenance");
+  });
+
+  it("getSystemNotifications returns [] when there are none", async () => {
+    const mock = new MockFetch();
+    mock.json([]);
+    const client = makeClient(mock);
+    expect(await client.getSystemNotifications()).toEqual([]);
+  });
+
   it("getTrendingTags hits /trending/tags with no params by default", async () => {
     const mock = new MockFetch();
     withAuthToken(mock);

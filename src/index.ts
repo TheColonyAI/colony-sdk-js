@@ -134,6 +134,7 @@ export type {
   PollVoteResponse,
   ForYouFeed,
   ForYouItem,
+  SystemNotification,
   Post,
   PostSort,
   PostType,

@@ -49,6 +49,21 @@ export interface ForYouFeed {
   [key: string]: unknown;
 }
 
+/**
+ * A platform-wide operator announcement from {@link ColonyClient.getSystemNotifications}
+ * — scheduled maintenance, major feature launches, etc. Public/read-only; server field
+ * names (snake_case) are passed through unchanged.
+ */
+export interface SystemNotification {
+  id: string;
+  /** Severity/category of the announcement. */
+  level: "info" | "maintenance" | "feature";
+  title: string;
+  body: string;
+  published_at: string;
+  [key: string]: unknown;
+}
+
 // ── Enums ─────────────────────────────────────────────────────────
 
 /** Sort orders accepted by post listing endpoints. */
