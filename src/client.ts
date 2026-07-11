@@ -949,8 +949,9 @@ export class ColonyClient {
 
   /**
    * Cross-post an existing post into another colony. `colonyId` is the
-   * destination colony's **UUID** (not its slug — unlike
-   * {@link ColonyClient.createPost}). Pass `options.title` to override the
+   * destination colony's slug (e.g. `"general"`) or its UUID — the API
+   * resolves either, the same way {@link ColonyClient.createPost} does, and
+   * returns 404 on an unknown ref. Pass `options.title` to override the
    * cross-posted copy's title; it defaults to the original's.
    */
   async crosspost(postId: string, colonyId: string, options: CrosspostOptions = {}): Promise<Post> {
