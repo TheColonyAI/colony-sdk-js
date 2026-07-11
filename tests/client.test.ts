@@ -508,6 +508,18 @@ describe("posts", () => {
     const sent = JSON.parse(mock.calls[1]?.body ?? "{}");
     expect(sent).toEqual({ title: "new" });
   });
+
+  it("updatePost forwards a tags array", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ id: "p1" });
+
+    const client = makeClient(mock);
+    await client.updatePost("p1", { tags: ["verification", "attestation"] });
+
+    const sent = JSON.parse(mock.calls[1]?.body ?? "{}");
+    expect(sent).toEqual({ tags: ["verification", "attestation"] });
+  });
 });
 
 describe("iterPosts (async iterator)", () => {
@@ -1027,6 +1039,87 @@ describe("deletePost", () => {
     await client.deletePost("p1");
     expect(mock.calls[1]?.method).toBe("DELETE");
     expect(mock.calls[1]?.url).toContain("/posts/p1");
+  });
+});
+
+describe("crosspost", () => {
+  it("POSTs colony_id (and optional title) to /posts/{id}/crosspost", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ id: "p2" });
+    const client = makeClient(mock);
+    await client.crosspost("p1", "c9", { title: "Reframed" });
+    expect(mock.calls[1]?.method).toBe("POST");
+    expect(mock.calls[1]?.url).toContain("/posts/p1/crosspost");
+    expect(JSON.parse(mock.calls[1]?.body ?? "{}")).toEqual({
+      colony_id: "c9",
+      title: "Reframed",
+    });
+  });
+
+  it("omits title when not provided", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ id: "p2" });
+    const client = makeClient(mock);
+    await client.crosspost("p1", "c9");
+    expect(JSON.parse(mock.calls[1]?.body ?? "{}")).toEqual({ colony_id: "c9" });
+  });
+});
+
+describe("post pin/close/reopen", () => {
+  it.each([
+    ["pinPost", "pin"],
+    ["closePost", "close"],
+    ["reopenPost", "reopen"],
+  ] as const)("%s POSTs to /posts/{id}/%s", async (method, path) => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ id: "p1" });
+    const client = makeClient(mock);
+    await client[method]("p1");
+    expect(mock.calls[1]?.method).toBe("POST");
+    expect(mock.calls[1]?.url).toContain(`/posts/p1/${path}`);
+  });
+});
+
+describe("setPostLanguage", () => {
+  it("PUTs to /posts/{id}/language with the language query param", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ post_id: "p1", language: "en" });
+    const client = makeClient(mock);
+    const result = await client.setPostLanguage("p1", "en");
+    expect(mock.calls[1]?.method).toBe("PUT");
+    expect(mock.calls[1]?.url).toContain("/posts/p1/language?language=en");
+    expect(result.language).toBe("en");
+  });
+});
+
+describe("getSuggestions", () => {
+  it("hits /suggestions with default limit", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ suggestions: [], count: 0, categories: {} });
+    const client = makeClient(mock);
+    const result = await client.getSuggestions();
+    expect(mock.calls[1]?.method).toBe("GET");
+    expect(mock.calls[1]?.url).toContain("/suggestions?");
+    expect(mock.calls[1]?.url).toContain("limit=20");
+    expect(mock.calls[1]?.url).not.toContain("category");
+    expect(mock.calls[1]?.url).not.toContain("kinds");
+    expect(result.count).toBe(0);
+  });
+
+  it("forwards limit, category, and kinds filters", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ suggestions: [], count: 0, categories: {} });
+    const client = makeClient(mock);
+    await client.getSuggestions({ limit: 5, category: "network", kinds: "follow_user" });
+    expect(mock.calls[1]?.url).toContain("limit=5");
+    expect(mock.calls[1]?.url).toContain("category=network");
+    expect(mock.calls[1]?.url).toContain("kinds=follow_user");
   });
 });
 
