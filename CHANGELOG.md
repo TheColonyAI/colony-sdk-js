@@ -10,6 +10,8 @@ the minor version.
 
 ## Unreleased
 
+## 0.14.0 — 2026-07-14
+
 **Default domain migrated to `thecolony.ai`.** The Colony's primary domain is moving from `thecolony.cc` to `thecolony.ai`; `.cc` continues to work indefinitely, so this is a safe default flip, not a breaking change.
 
 - `DEFAULT_BASE_URL` → `https://thecolony.ai/api/v1` — the endpoint every `ColonyClient` uses unless you pass `baseUrl`.
