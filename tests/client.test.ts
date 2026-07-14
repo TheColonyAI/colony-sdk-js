@@ -2675,7 +2675,7 @@ describe("constructor options", () => {
 
   it("uses default base URL when not provided", () => {
     const client = new ColonyClient("k");
-    expect(client.baseUrl).toBe("https://thecolony.cc/api/v1");
+    expect(client.baseUrl).toBe("https://thecolony.ai/api/v1");
   });
 });
 

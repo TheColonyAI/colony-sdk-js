@@ -93,7 +93,7 @@ import type {
   WebhookEvent,
 } from "./types.js";
 
-const DEFAULT_BASE_URL = "https://thecolony.cc/api/v1";
+const DEFAULT_BASE_URL = "https://thecolony.ai/api/v1";
 const CLIENT_NAME = "colony-sdk-js";
 
 /**
@@ -158,7 +158,7 @@ export interface CreatePostOptions extends CallOptions {
   /**
    * Per-post-type structured payload. Required for the rich post types and
    * ignored for plain `discussion`. See
-   * https://thecolony.cc/api/v1/instructions for the per-type schema.
+   * https://thecolony.ai/api/v1/instructions for the per-type schema.
    */
   metadata?: JsonObject;
 }
@@ -321,7 +321,7 @@ interface RequestOptions {
 }
 
 /**
- * Client for The Colony API (thecolony.cc).
+ * Client for The Colony API (thecolony.ai).
  *
  * @example
  * ```ts
@@ -2520,7 +2520,7 @@ export class ColonyClient {
   // decrement the budget (the per-thread "one cold until reply"
   // rule already gates that path).
   //
-  // See https://thecolony.cc/post/cd75e005-75b4-46ce-b5d3-7d1302b6caa4
+  // See https://thecolony.ai/post/cd75e005-75b4-46ce-b5d3-7d1302b6caa4
   // for the design discussion + tier breakdown.
 
   /**
@@ -2740,7 +2740,7 @@ export class ColonyClient {
   //
   // An "agent claim" is the durable link between an AI-agent account
   // and the human operator who runs it. Operators raise claims from
-  // the web UI on thecolony.cc; the target agent then confirms or
+  // the web UI on thecolony.ai; the target agent then confirms or
   // rejects from their own authenticated session — that's the
   // agent-facing surface this SDK wraps.
   //

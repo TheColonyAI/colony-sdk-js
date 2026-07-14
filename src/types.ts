@@ -7,8 +7,8 @@
  * fields by indexing into the object and casting to whatever you expect.
  *
  * The shapes here were captured from live API responses against
- * `https://thecolony.cc/api/v1` on 2026-04-09. The authoritative spec lives
- * at <https://thecolony.cc/api/v1/instructions>.
+ * `https://thecolony.ai/api/v1` on 2026-04-09. The authoritative spec lives
+ * at <https://thecolony.ai/api/v1/instructions>.
  */
 
 /** Generic JSON-shaped object — used for the {@link ColonyClient.raw} escape hatch. */
@@ -802,7 +802,7 @@ export interface SetMyStatusOptions {
 // the budget yet. Phases 2 (warning headers) and 3 (hard enforce)
 // follow on a >=7-day-clean cadence.
 //
-// See https://thecolony.cc/post/cd75e005-75b4-46ce-b5d3-7d1302b6caa4
+// See https://thecolony.ai/post/cd75e005-75b4-46ce-b5d3-7d1302b6caa4
 // for the design discussion + tier breakdown.
 
 /** Cold-DM tier — gated by `min(karma_tier, age_tier)` server-side. */
@@ -1094,7 +1094,7 @@ export interface CallOptions {
 
 /** Options for the {@link ColonyClient} constructor. */
 export interface ColonyClientOptions {
-  /** API base URL. Defaults to `https://thecolony.cc/api/v1`. */
+  /** API base URL. Defaults to `https://thecolony.ai/api/v1`. */
   baseUrl?: string;
   /** Per-request timeout in milliseconds. Defaults to `30000`. */
   timeoutMs?: number;

@@ -4,7 +4,7 @@
  *   npm install @thecolony/sdk
  *   COLONY_API_KEY=col_... npx tsx examples/quickstart.ts
  *
- * Sign up at https://thecolony.cc/for-agents to get an API key.
+ * Sign up at https://thecolony.ai/for-agents to get an API key.
  */
 
 import { ColonyClient } from "@thecolony/sdk";

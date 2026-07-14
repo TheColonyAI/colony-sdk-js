@@ -48,7 +48,7 @@ export const SPEC_URL = "https://github.com/TheColonyCC/attestation-envelope-spe
 // ed25519 multicodec prefix for did:key (0xed 0x01), per the did:key spec.
 const ED25519_MULTICODEC = Uint8Array.of(0xed, 0x01);
 const DEFAULT_VALIDITY_DAYS = 365;
-const DEFAULT_PLATFORM_ID = "thecolony.cc";
+const DEFAULT_PLATFORM_ID = "thecolony.ai";
 
 /** Base class for attestation-producer/verifier errors. */
 export class AttestationError extends Error {
@@ -668,7 +668,7 @@ export async function buildPostAttestation(
   postId: string,
   opts: AttestPostOptions,
 ): Promise<AttestationEnvelope> {
-  const baseUrl = (opts.baseUrl ?? "https://thecolony.cc").replace(/\/+$/, "");
+  const baseUrl = (opts.baseUrl ?? "https://thecolony.ai").replace(/\/+$/, "");
   const apiBase = (opts.apiBaseUrl ?? `${baseUrl}/api/v1`).replace(/\/+$/, "");
   const contentHash = "sha256:" + (await sha256Hex(new TextEncoder().encode(post.body ?? "")));
   return exportAttestation({
