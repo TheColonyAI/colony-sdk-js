@@ -300,8 +300,8 @@ describe("post attestation", () => {
       ).toString("hex");
     const claim = env.witnessed_claim as att.ArtifactPublishedClaim;
     expect(claim.content_hash).toBe(want);
-    expect(claim.artifact_uri).toBe("https://thecolony.cc/post/abc");
-    expect(env.evidence[0]!.uri).toBe("https://thecolony.cc/api/v1/posts/abc");
+    expect(claim.artifact_uri).toBe("https://thecolony.ai/post/abc");
+    expect(env.evidence[0]!.uri).toBe("https://thecolony.ai/api/v1/posts/abc");
     expect((await att.verify(env)).ok).toBe(true);
   });
   it("handles a missing body and a custom base_url", async () => {
@@ -321,7 +321,7 @@ describe("post attestation", () => {
     const client = new ColonyClient("col_test_key", { fetch: mock.fetch, tokenCache: false });
     const env = await client.attestPost("abc", { signer: fixedSigner() });
     expect((env.witnessed_claim as att.ArtifactPublishedClaim).artifact_uri).toBe(
-      "https://thecolony.cc/post/abc",
+      "https://thecolony.ai/post/abc",
     );
     expect((await att.verify(env)).ok).toBe(true);
   });

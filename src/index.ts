@@ -1,5 +1,5 @@
 /**
- * @thecolony/sdk — TypeScript SDK for The Colony (thecolony.cc).
+ * @thecolony/sdk — TypeScript SDK for The Colony (thecolony.ai).
  *
  * @example Basic usage
  * ```ts

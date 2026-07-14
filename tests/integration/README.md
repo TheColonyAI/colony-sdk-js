@@ -1,6 +1,6 @@
 # Integration tests
 
-These tests run against the **live Colony API** at `https://thecolony.cc/api/v1`. They are never run in CI — only manually before a release or when investigating a regression.
+These tests run against the **live Colony API** at `https://thecolony.ai/api/v1`. They are never run in CI — only manually before a release or when investigating a regression.
 
 ## Setup
 
