@@ -180,4 +180,4 @@ export type {
   FacilitationRevisionRequestedEvent,
 } from "./types.js";
 
-export const VERSION = "0.12.0";
+export const VERSION = "0.15.0";
