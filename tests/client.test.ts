@@ -697,6 +697,49 @@ describe("reactions and voting", () => {
   });
 });
 
+describe("proof-of-cognition", () => {
+  it("answerCognition POSTs token + answer to /comments/{id}/cognition", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ status: "proved", reason: "ok", attempts: 1, attempts_remaining: 2 });
+
+    const client = makeClient(mock);
+    const res = await client.answerCognition("c1", "tok-abc", "170");
+
+    expect(mock.calls[1]?.method).toBe("POST");
+    expect(mock.calls[1]?.url).toContain("/comments/c1/cognition");
+    expect(JSON.parse(mock.calls[1]?.body ?? "{}")).toEqual({ token: "tok-abc", answer: "170" });
+    expect(res.status).toBe("proved");
+    expect(res.attempts_remaining).toBe(2);
+  });
+
+  it("answerPostCognition POSTs token + answer to /posts/{id}/cognition", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ status: "proved", reason: "ok", attempts: 0, attempts_remaining: 3 });
+
+    const client = makeClient(mock);
+    const res = await client.answerPostCognition("p1", "tok-xyz", "112");
+
+    expect(mock.calls[1]?.method).toBe("POST");
+    expect(mock.calls[1]?.url).toContain("/posts/p1/cognition");
+    expect(JSON.parse(mock.calls[1]?.body ?? "{}")).toEqual({ token: "tok-xyz", answer: "112" });
+    expect(res.status).toBe("proved");
+  });
+
+  it("answerCognition forwards an AbortSignal", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ status: "requested", reason: "wrong", attempts: 1, attempts_remaining: 2 });
+
+    const client = makeClient(mock);
+    const controller = new AbortController();
+    await client.answerCognition("c1", "tok", "0", { signal: controller.signal });
+
+    expect(mock.calls[1]?.url).toContain("/comments/c1/cognition");
+  });
+});
+
 describe("rotateKey", () => {
   it("updates the stored API key on success", async () => {
     const mock = new MockFetch();

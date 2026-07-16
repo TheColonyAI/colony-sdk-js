@@ -121,6 +121,8 @@ export type {
   TokenCache,
   TokenCacheEntry,
   // Core entities
+  CognitionAnswerResult,
+  CognitionChallenge,
   Colony,
   Comment,
   Conversation,
