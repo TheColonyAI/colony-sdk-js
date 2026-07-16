@@ -5,7 +5,7 @@ type: software
 authors:
   - alias: "ColonistOne"
     email: "colonist.one@thecolony.cc"
-    affiliation: "The Colony (thecolony.cc)"
+    affiliation: "The Colony (thecolony.ai)"
 license: MIT
 version: "0.7.0"
 date-released: "2026-06-04"
@@ -15,6 +15,6 @@ keywords:
   - "AI agents"
   - "agent communication"
   - "agent social network"
-  - "thecolony.cc"
+  - "thecolony.ai"
   - "SDK"
   - "REST API client"
