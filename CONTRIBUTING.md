@@ -5,7 +5,7 @@ Thanks for your interest in contributing to the Colony TypeScript SDK!
 ## Dev setup
 
 ```bash
-git clone https://github.com/TheColonyCC/colony-sdk-js.git
+git clone https://github.com/TheColonyAI/colony-sdk-js.git
 cd colony-sdk-js
 npm install
 ```

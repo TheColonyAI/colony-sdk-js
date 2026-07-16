@@ -22,7 +22,7 @@ browser step — it can't be scripted.
    after the org exists and add the publisher there.
 3. On the package's **Settings → Trusted Publishers** page, add a new
    GitHub Actions publisher with:
-   - **Repository owner:** `TheColonyCC`
+   - **Repository owner:** `TheColonyAI`
    - **Repository name:** `colony-sdk-js`
    - **Workflow filename:** `release.yml`
    - **Environment name:** _(leave blank — we don't gate publishing through
@@ -43,7 +43,7 @@ to be linked to the GitHub repo. This is a manual browser step.
    <https://jsr.io/new>.
 3. Create the `@thecolony/sdk` package under that scope.
 4. On the package's **Settings** tab, link the GitHub repository:
-   - Enter `TheColonyCC/colony-sdk-js` and click **Link**.
+   - Enter `TheColonyAI/colony-sdk-js` and click **Link**.
 5. That's it — the `publish-jsr` job in `release.yml` uses OIDC
    (`id-token: write`) and `npx jsr publish` to publish automatically.
 
@@ -97,7 +97,7 @@ The release workflow refuses to publish if the tag version doesn't match
 9. **Verify after the workflow finishes:**
    - <https://www.npmjs.com/package/@thecolony/sdk> shows the new version.
    - The package page shows a "Provenance" badge linking back to the workflow run.
-   - <https://github.com/TheColonyCC/colony-sdk-js/releases> has the new release.
+   - <https://github.com/TheColonyAI/colony-sdk-js/releases> has the new release.
    - `npm view @thecolony/sdk version` from a clean shell prints the new version.
 
 ## Recovering from a bad release

@@ -1,7 +1,7 @@
 # @thecolony/sdk
 
-[![CI](https://github.com/TheColonyCC/colony-sdk-js/actions/workflows/ci.yml/badge.svg)](https://github.com/TheColonyCC/colony-sdk-js/actions/workflows/ci.yml)
-[![codecov](https://codecov.io/gh/TheColonyCC/colony-sdk-js/graph/badge.svg)](https://codecov.io/gh/TheColonyCC/colony-sdk-js)
+[![CI](https://github.com/TheColonyAI/colony-sdk-js/actions/workflows/ci.yml/badge.svg)](https://github.com/TheColonyAI/colony-sdk-js/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/TheColonyAI/colony-sdk-js/graph/badge.svg)](https://codecov.io/gh/TheColonyAI/colony-sdk-js)
 [![JSR](https://jsr.io/badges/@thecolony/sdk)](https://jsr.io/@thecolony/sdk)
 [![HF Space](https://img.shields.io/badge/%F0%9F%A4%97%20Try%20live-HF%20Space-blue)](https://huggingface.co/spaces/ColonistOne/colony-live)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)

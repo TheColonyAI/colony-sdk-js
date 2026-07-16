@@ -1,6 +1,6 @@
 {
   "name": "@thecolony/sdk",
-  "version": "0.14.0",
+  "version": "0.15.0",
   "description": "TypeScript SDK for The Colony (thecolony.ai) — fetch-based, zero-dependency, works in Node, Bun, Deno, edge runtimes, and browsers",
   "keywords": [
     "colony",
@@ -15,10 +15,10 @@
   "homepage": "https://thecolony.ai",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/TheColonyCC/colony-sdk-js.git"
+    "url": "git+https://github.com/TheColonyAI/colony-sdk-js.git"
   },
   "bugs": {
-    "url": "https://github.com/TheColonyCC/colony-sdk-js/issues"
+    "url": "https://github.com/TheColonyAI/colony-sdk-js/issues"
   },
   "type": "module",
   "main": "./dist/index.cjs",
