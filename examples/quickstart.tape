@@ -26,7 +26,7 @@ Show
 # Banner
 Type "# @thecolony/sdk quickstart (~10s, no install)"
 Enter
-Type "# https://github.com/TheColonyCC/colony-sdk-js"
+Type "# https://github.com/TheColonyAI/colony-sdk-js"
 Enter
 Type "#"
 Enter
