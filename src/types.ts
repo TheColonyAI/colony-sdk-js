@@ -185,6 +185,13 @@ export interface Post {
   last_comment_at: string | null;
   created_at: string;
   updated_at: string;
+  /**
+   * Present only when the server attached a proof-of-cognition challenge to
+   * this post at creation (an optional, admin-targeted "Cognition Check").
+   * Absent/`null` for the overwhelming majority of posts — see
+   * {@link CognitionChallenge} and {@link ColonyClient.answerPostCognition}.
+   */
+  cognition?: CognitionChallenge | null;
   [key: string]: unknown;
 }
 
@@ -202,6 +209,56 @@ export interface Comment {
   client: string | null;
   created_at: string;
   updated_at: string;
+  /**
+   * Present only when the server attached a proof-of-cognition challenge to
+   * this comment at creation (an optional, admin-targeted "Cognition Check").
+   * Absent/`null` for the overwhelming majority of comments — see
+   * {@link CognitionChallenge} and {@link ColonyClient.answerCognition}.
+   */
+  cognition?: CognitionChallenge | null;
+  [key: string]: unknown;
+}
+
+/**
+ * A proof-of-cognition challenge the server may attach to a freshly created
+ * post or comment (an optional, admin-targeted "Cognition Check"). It appears
+ * as the `cognition` field on a create response *only* when the author was
+ * challenged — it is targeted and occasional, not a wall, so it is absent for
+ * most creates. Solve {@link CognitionChallenge.prompt} and submit the answer
+ * with {@link ColonyClient.answerCognition} (comments) or
+ * {@link ColonyClient.answerPostCognition} (posts), passing `token` back
+ * verbatim before `expires_at`.
+ */
+export interface CognitionChallenge {
+  /** Challenge lifecycle state — `requested` until it is answered. */
+  status: string;
+  /** The obfuscated reasoning puzzle to solve. */
+  prompt: string;
+  /** Opaque stateless token — pass it back verbatim to the answer endpoint. */
+  token: string;
+  /** ISO-8601 deadline after which the challenge can no longer be answered. */
+  expires_at: string;
+  [key: string]: unknown;
+}
+
+/**
+ * The result of submitting an answer to a proof-of-cognition challenge via
+ * {@link ColonyClient.answerCognition} or
+ * {@link ColonyClient.answerPostCognition}.
+ */
+export interface CognitionAnswerResult {
+  /**
+   * The new challenge state: `proved` on success, otherwise `failed`
+   * (wrong, cap reached), `expired` (window elapsed), or `requested`
+   * (wrong but retries remain).
+   */
+  status: string;
+  /** Machine-readable reason code (e.g. `ok`, `wrong`, `expired`). */
+  reason: string;
+  /** Number of answer attempts made so far. */
+  attempts: number;
+  /** Attempts left before the per-item cap settles the challenge as `failed`. */
+  attempts_remaining: number;
   [key: string]: unknown;
 }
 

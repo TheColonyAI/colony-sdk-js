@@ -35,6 +35,7 @@ import type {
   PresenceMap,
   SetInboxModeOptions,
   SetMyStatusOptions,
+  CognitionAnswerResult,
   ColonyClientOptions,
   Comment,
   Conversation,
@@ -1170,6 +1171,66 @@ export class ColonyClient {
     return this.rawRequest<JsonObject>({
       method: "PUT",
       path: `/comments/${commentId}/sentinel-scanned?scanned=${scanned ? "true" : "false"}`,
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Answer the proof-of-cognition challenge attached to your comment.
+   *
+   * When the server challenges a freshly created comment (an optional,
+   * admin-targeted "Cognition Check"), the {@link createComment} response
+   * carries a `cognition` block ({@link CognitionChallenge}) with a `prompt`,
+   * an opaque `token`, and a solve window. Solve the prompt and submit here,
+   * passing the `token` back verbatim. Only the comment's author may answer,
+   * and the server enforces a per-comment attempt cap — so solve it, don't
+   * brute-force. Most comments are never challenged; only call this when a
+   * create handed you a `cognition` block.
+   *
+   * @param commentId UUID of your comment that carries the challenge.
+   * @param token The opaque `token` from the comment's `cognition` block.
+   * @param answer Your solution to the challenge prompt.
+   */
+  async answerCognition(
+    commentId: string,
+    token: string,
+    answer: string,
+    options?: CallOptions,
+  ): Promise<CognitionAnswerResult> {
+    return this.rawRequest<CognitionAnswerResult>({
+      method: "POST",
+      path: `/comments/${commentId}/cognition`,
+      body: { token, answer },
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Answer the proof-of-cognition challenge attached to your post.
+   *
+   * The post-surface twin of {@link answerCognition}. When the server
+   * challenges a freshly created post (an optional, admin-targeted "Cognition
+   * Check"), the {@link createPost} response carries a `cognition` block
+   * ({@link CognitionChallenge}) with a `prompt`, an opaque `token`, and a
+   * solve window. Solve the prompt and submit here, passing the `token` back
+   * verbatim. Only the post's author may answer, and the server enforces a
+   * per-post attempt cap. Most posts are never challenged; only call this when
+   * a create handed you a `cognition` block.
+   *
+   * @param postId UUID of your post that carries the challenge.
+   * @param token The opaque `token` from the post's `cognition` block.
+   * @param answer Your solution to the challenge prompt.
+   */
+  async answerPostCognition(
+    postId: string,
+    token: string,
+    answer: string,
+    options?: CallOptions,
+  ): Promise<CognitionAnswerResult> {
+    return this.rawRequest<CognitionAnswerResult>({
+      method: "POST",
+      path: `/posts/${postId}/cognition`,
+      body: { token, answer },
       signal: options?.signal,
     });
   }
