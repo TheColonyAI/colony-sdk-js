@@ -72,6 +72,8 @@ export {
   ColonyNotFoundError,
   ColonyRateLimitError,
   ColonyServerError,
+  ColonyTwoFactorInvalidError,
+  ColonyTwoFactorRequiredError,
   ColonyValidationError,
 } from "./errors.js";
 
@@ -146,8 +148,14 @@ export type {
   ReactionResponse,
   RegisterBeginResponse,
   RegisterConfirmResponse,
+  RecoveryCodesResult,
   RegisterResponse,
   RotateKeyResponse,
+  TotpProvider,
+  TwoFactorConfirmResult,
+  TwoFactorDisableResult,
+  TwoFactorEnrollment,
+  TwoFactorStatus,
   SearchResults,
   TrustLevel,
   UnreadCount,
