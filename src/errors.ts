@@ -47,6 +47,35 @@ export class ColonyAuthError extends ColonyAPIError {
   }
 }
 
+/**
+ * 401 `AUTH_2FA_REQUIRED` — the account has TOTP 2FA enabled and the
+ * `/auth/token` exchange needs a code that wasn't supplied.
+ *
+ * Pass `totp` in {@link ColonyClientOptions}. Prefer the *callable* form for
+ * anything long-lived: a bare string is single-use, because the server refuses
+ * to accept the same TOTP window twice.
+ */
+export class ColonyTwoFactorRequiredError extends ColonyAuthError {
+  constructor(message: string, status: number, response?: Record<string, unknown>, code?: string) {
+    super(message, status, response, code);
+    this.name = "ColonyTwoFactorRequiredError";
+  }
+}
+
+/**
+ * 401 `AUTH_2FA_INVALID` — the supplied 2FA code was rejected.
+ *
+ * Usual causes: clock skew between your host and the server; replaying a code
+ * the server has already accepted (each TOTP window is single-use); or a wrong
+ * or already-consumed recovery code.
+ */
+export class ColonyTwoFactorInvalidError extends ColonyAuthError {
+  constructor(message: string, status: number, response?: Record<string, unknown>, code?: string) {
+    super(message, status, response, code);
+    this.name = "ColonyTwoFactorInvalidError";
+  }
+}
+
 /** 404 Not Found — the requested resource (post, user, comment, etc.) does not exist. */
 export class ColonyNotFoundError extends ColonyAPIError {
   constructor(message: string, status: number, response?: Record<string, unknown>, code?: string) {
@@ -142,6 +171,15 @@ const STATUS_HINTS: Record<number, string> = {
   504: "gateway timeout — Colony API is slow, retry shortly",
 };
 
+/**
+ * Machine-readable error codes that refine a generic 401/403 into a more
+ * specific {@link ColonyAuthError} subclass. Keyed on the API's `code` field.
+ */
+const AUTH_CODE_ERRORS: Record<string, typeof ColonyAuthError> = {
+  AUTH_2FA_REQUIRED: ColonyTwoFactorRequiredError,
+  AUTH_2FA_INVALID: ColonyTwoFactorInvalidError,
+};
+
 /** Map an HTTP status code to the most specific {@link ColonyAPIError} subclass constructor. */
 function errorClassForStatus(status: number): typeof ColonyAPIError {
   if (status === 401 || status === 403) return ColonyAuthError;
@@ -202,7 +240,15 @@ export function buildApiError(
     fullMessage = `${fullMessage} (${hint})`;
   }
 
-  const ErrClass = errorClassForStatus(status);
+  let ErrClass = errorClassForStatus(status);
+  // Refine the generic 401/403 → ColonyAuthError by machine-readable code so
+  // callers can distinguish "your key is wrong" (unrecoverable without new
+  // credentials) from "you owe me a 2FA code" (recoverable by supplying one).
+  // Scoped to ColonyAuthError so an AUTH_2FA_* code on a non-auth status can't
+  // be re-mapped.
+  if (ErrClass === ColonyAuthError) {
+    ErrClass = AUTH_CODE_ERRORS[errorCode ?? ""] ?? ColonyAuthError;
+  }
   if (ErrClass === ColonyRateLimitError) {
     return new ColonyRateLimitError(fullMessage, status, data, errorCode, retryAfter);
   }

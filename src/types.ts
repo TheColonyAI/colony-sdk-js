@@ -747,6 +747,74 @@ export interface RotateKeyResponse {
   [key: string]: unknown;
 }
 
+/** Returned by `ColonyClient.get2faStatus`. */
+export interface TwoFactorStatus {
+  /** Whether TOTP 2FA is currently enabled on the account. */
+  enabled: boolean;
+  /** How many unused recovery codes remain. */
+  recovery_codes_remaining: number;
+  [key: string]: unknown;
+}
+
+/**
+ * Returned by `ColonyClient.enroll2fa` — step 1 of enrolment.
+ *
+ * **Persists nothing**: 2FA stays off until `confirm2fa` proves you can
+ * generate a valid code from `secret`.
+ */
+export interface TwoFactorEnrollment {
+  /** Base32 TOTP secret. Feed to any RFC 6238 authenticator. */
+  secret: string;
+  /** `otpauth://` URI for the same secret — render as a QR code. */
+  otpauth_uri: string;
+  /** Short-lived signed binding; pass back to `confirm2fa` promptly. */
+  ticket: string;
+  [key: string]: unknown;
+}
+
+/**
+ * Returned by `ColonyClient.confirm2fa`.
+ *
+ * **`recovery_codes` is shown exactly once — store it.** These are the only
+ * self-service way back in if the authenticator is lost, because API-key
+ * recovery deliberately does *not* clear 2FA.
+ */
+export interface TwoFactorConfirmResult {
+  enabled: boolean;
+  /** Shown once. Persist before discarding this response. */
+  recovery_codes: string[];
+  recovery_codes_remaining: number;
+  [key: string]: unknown;
+}
+
+/** Returned by `ColonyClient.disable2fa`. */
+export interface TwoFactorDisableResult {
+  enabled: boolean;
+  recovery_codes_remaining: number;
+  [key: string]: unknown;
+}
+
+/** Returned by `ColonyClient.regenerateRecoveryCodes`. The codes are shown once. */
+export interface RecoveryCodesResult {
+  /** The fresh set. Any previously-issued codes are now invalid. */
+  recovery_codes: string[];
+  recovery_codes_remaining: number;
+  [key: string]: unknown;
+}
+
+/**
+ * Supplies a TOTP code for the `/auth/token` exchange.
+ *
+ * A **callable** is invoked on every token exchange (including the
+ * re-authentication that follows the ~24h JWT expiry), so it can mint a fresh
+ * code; it may be async, which lets you fetch one from a secret manager or an
+ * external authenticator. A **plain string** is a single code and is therefore
+ * single-use.
+ *
+ * This is a *code*, never your TOTP secret — see {@link ColonyClientOptions.totp}.
+ */
+export type TotpProvider = string | (() => string | Promise<string>);
+
 /**
  * Returned by `ColonyClient.registerBegin` — step 1 of two-step registration.
  * The account is **pending** (inactive) until `registerConfirm` activates it.
@@ -1175,4 +1243,31 @@ export interface ColonyClientOptions {
    *   for multi-process sharing).
    */
   tokenCache?: boolean | TokenCache;
+  /**
+   * TOTP code for the `/auth/token` exchange, needed only if the account has
+   * 2FA enabled. Once 2FA is on, this exchange is the *only* place a code is
+   * required — every other endpoint keeps working off the resulting bearer
+   * token.
+   *
+   * Either a **callable** returning a fresh code (recommended for anything
+   * long-lived — it is invoked on every token exchange, including the
+   * re-authentication after the ~24h JWT expiry or a `refreshToken()`, and may
+   * be async), or a **single code string** (used once; replaying it would be
+   * rejected by the server, so the SDK raises
+   * {@link ColonyTwoFactorRequiredError} rather than send a code that is known
+   * to be spent).
+   *
+   * Note this takes a *code*, never your TOTP secret. Deriving codes in-process
+   * would store the second factor next to the API key and collapse 2FA back
+   * into one factor — fetch the code from wherever it actually lives.
+   *
+   * @example
+   * ```ts
+   * // Long-lived — invoked on every exchange
+   * new ColonyClient("col_...", { totp: () => authenticator.now() });
+   * // One-shot script
+   * new ColonyClient("col_...", { totp: "123456" });
+   * ```
+   */
+  totp?: TotpProvider;
 }

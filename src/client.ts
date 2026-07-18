@@ -17,6 +17,7 @@ import {
   ColonyAPIError,
   ColonyNetworkError,
   ColonyNotFoundError,
+  ColonyTwoFactorRequiredError,
   buildApiError,
 } from "./errors.js";
 import { DEFAULT_RETRY, type RetryConfig, computeRetryDelay, shouldRetry, sleep } from "./retry.js";
@@ -38,6 +39,12 @@ import type {
   CognitionAnswerResult,
   ColonyClientOptions,
   Comment,
+  RecoveryCodesResult,
+  TotpProvider,
+  TwoFactorConfirmResult,
+  TwoFactorDisableResult,
+  TwoFactorEnrollment,
+  TwoFactorStatus,
   Conversation,
   ConversationDetail,
   ConversationHistory,
@@ -355,6 +362,21 @@ export class ColonyClient {
   private colonyUuidCache: Map<string, string> | null = null;
 
   /**
+   * TOTP 2FA code source for the `/auth/token` exchange, or `undefined` when
+   * the account has no 2FA. A callable is invoked per exchange (right for
+   * long-lived clients, since the client re-authenticates when the JWT expires
+   * ~24h or after `refreshToken()`); a bare string is single-use because the
+   * server refuses to accept the same TOTP window twice.
+   *
+   * Deliberately NOT accepted: the TOTP *secret*. Deriving codes in-process
+   * would mean storing the second factor next to the API key, which collapses
+   * 2FA back into one factor.
+   */
+  private readonly totp: TotpProvider | undefined;
+  /** Whether a static `totp` string has already been spent on one exchange. */
+  private totpCodeUsed = false;
+
+  /**
    * Raw response headers from the most recent request (lowercased keys).
    * Populated on every 2xx/4xx/5xx response. Use this to read one-off
    * headers like `X-Idempotency-Replayed` that the SDK surfaces on a
@@ -384,6 +406,49 @@ export class ColonyClient {
         : typeof options.tokenCache === "object"
           ? options.tokenCache
           : _globalTokenCache;
+    this.totp = options.totp;
+  }
+
+  /**
+   * Resolve a TOTP code for one `/auth/token` exchange, or `null` when no 2FA
+   * is configured.
+   *
+   * A callable is invoked every time so it can mint a fresh code. A static
+   * string is returned once: the server accepts a given TOTP window exactly
+   * once, so replaying it on a later refresh would come back as an opaque
+   * `AUTH_2FA_INVALID`. Raise something actionable instead of sending a code
+   * already known to be spent.
+   */
+  private async resolveTotp(): Promise<string | null> {
+    if (this.totp === undefined) return null;
+    if (typeof this.totp === "function") return this.totp();
+    if (this.totpCodeUsed) {
+      throw new ColonyTwoFactorRequiredError(
+        "The single TOTP code passed as totp: '...' was already used for one " +
+          "token exchange and cannot be replayed (the server accepts each TOTP " +
+          "window once). Pass a callable instead — e.g. " +
+          "totp: () => authenticator.now() — so a fresh code can be obtained " +
+          "whenever the client re-authenticates.",
+        401,
+        {},
+        "AUTH_2FA_REQUIRED",
+      );
+    }
+    this.totpCodeUsed = true;
+    return this.totp;
+  }
+
+  /**
+   * Body for `/auth/token`, carrying a 2FA code only when configured.
+   *
+   * Omitted entirely when no `totp` is set, so the request is byte-identical
+   * to a pre-2FA client for the overwhelming majority of accounts.
+   */
+  private async tokenRequestBody(): Promise<Record<string, unknown>> {
+    const body: Record<string, unknown> = { api_key: this.apiKey };
+    const code = await this.resolveTotp();
+    if (code !== null) body["totp_code"] = code;
+    return body;
   }
 
   /** Cache key: `apiKey + NUL + baseUrl` so different environments don't collide. */
@@ -409,7 +474,7 @@ export class ColonyClient {
     const data = await this.rawRequest<AuthTokenResponse>({
       method: "POST",
       path: "/auth/token",
-      body: { api_key: this.apiKey },
+      body: await this.tokenRequestBody(),
       auth: false,
     });
     this.token = data.access_token;
@@ -450,6 +515,113 @@ export class ColonyClient {
       this.tokenExpiry = 0;
     }
     return data;
+  }
+
+  // ── TOTP two-factor auth ──────────────────────────────────────────
+  //
+  // 2FA is optional and off by default. Once enabled, the ONLY place a code
+  // is required is the `/auth/token` exchange — every other endpoint keeps
+  // working off the resulting bearer token. Construct the client with
+  // `{ totp }` to supply codes for that exchange.
+
+  /**
+   * Report whether TOTP 2FA is enabled on your account.
+   *
+   * Mirrors the Python SDK's `get_2fa_status`.
+   */
+  async get2faStatus(options?: CallOptions): Promise<TwoFactorStatus> {
+    return this.rawRequest<TwoFactorStatus>({
+      method: "GET",
+      path: "/auth/2fa/status",
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Begin TOTP enrolment. **Persists nothing** — 2FA stays off.
+   *
+   * Feed the returned `secret` to any RFC 6238 authenticator (or render
+   * `otpauth_uri` as a QR code), then prove you can generate a code by passing
+   * the `secret`, the `ticket` and that code to {@link confirm2fa}. The ticket
+   * is a short-lived signed binding, so enrolment must be completed promptly.
+   *
+   * Mirrors the Python SDK's `enroll_2fa`.
+   */
+  async enroll2fa(options?: CallOptions): Promise<TwoFactorEnrollment> {
+    return this.rawRequest<TwoFactorEnrollment>({
+      method: "POST",
+      path: "/auth/2fa/enroll",
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Turn 2FA on, proving you can generate a valid code first.
+   *
+   * **Store the returned recovery codes.** They are shown exactly once and are
+   * the only self-service way back in if you lose the authenticator — API-key
+   * recovery deliberately does *not* clear 2FA.
+   *
+   * Note the code you pass here is consumed: the server records its TOTP
+   * window and refuses to accept that window again, so wait for the next one
+   * (~30s) before exchanging a token.
+   *
+   * Mirrors the Python SDK's `confirm_2fa`.
+   *
+   * @param secret The `secret` from {@link enroll2fa}.
+   * @param ticket The `ticket` from {@link enroll2fa}.
+   * @param code A current 6-digit code generated from `secret`.
+   */
+  async confirm2fa(
+    secret: string,
+    ticket: string,
+    code: string,
+    options?: CallOptions,
+  ): Promise<TwoFactorConfirmResult> {
+    return this.rawRequest<TwoFactorConfirmResult>({
+      method: "POST",
+      path: "/auth/2fa/confirm",
+      body: { secret, ticket, code },
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Turn 2FA off. Requires a current TOTP code or a recovery code.
+   *
+   * Clears the stored secret, the remaining recovery codes and the replay
+   * window, returning the account to single-factor API-key auth.
+   *
+   * Mirrors the Python SDK's `disable_2fa`.
+   *
+   * @param code A current 6-digit TOTP code, or one of your recovery codes.
+   */
+  async disable2fa(code: string, options?: CallOptions): Promise<TwoFactorDisableResult> {
+    return this.rawRequest<TwoFactorDisableResult>({
+      method: "POST",
+      path: "/auth/2fa/disable",
+      body: { code },
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Replace your recovery codes with a fresh set, invalidating the old.
+   *
+   * Use when you've spent most of them, or believe they were exposed. The new
+   * codes are returned **once**.
+   *
+   * Mirrors the Python SDK's `regenerate_recovery_codes`.
+   *
+   * @param code A current 6-digit TOTP code, or one of your remaining recovery codes.
+   */
+  async regenerateRecoveryCodes(code: string, options?: CallOptions): Promise<RecoveryCodesResult> {
+    return this.rawRequest<RecoveryCodesResult>({
+      method: "POST",
+      path: "/auth/2fa/recovery-codes/regenerate",
+      body: { code },
+      signal: options?.signal,
+    });
   }
 
   /**
