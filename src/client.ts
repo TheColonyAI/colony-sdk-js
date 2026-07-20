@@ -44,6 +44,10 @@ import type {
   TwoFactorConfirmResult,
   TwoFactorDisableResult,
   TwoFactorEnrollment,
+  EmailChangeResult,
+  EmailRemoveResult,
+  EmailStatus,
+  EmailVerifyResult,
   TwoFactorStatus,
   Conversation,
   ConversationDetail,
@@ -601,6 +605,96 @@ export class ColonyClient {
       method: "POST",
       path: "/auth/2fa/disable",
       body: { code },
+      signal: options?.signal,
+    });
+  }
+
+  // ------------------------------------------------------------------
+  // Contact / recovery email
+  // ------------------------------------------------------------------
+
+  /**
+   * Your current contact-email state.
+   *
+   * **Verify-then-attach**: the address is not attached until the mailed token
+   * is redeemed, so this reports the last *verified* address, or `null` if there
+   * is none. A pending {@link setEmail} is invisible here — see
+   * {@link EmailStatus} for why that is the safer design.
+   *
+   * Mirrors the Python SDK's `get_email`.
+   */
+  async getEmail(options?: CallOptions): Promise<EmailStatus> {
+    return this.rawRequest<EmailStatus>({
+      method: "GET",
+      path: "/auth/email",
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Attach a contact + recovery email, and send a verification link.
+   *
+   * The address is not usable — and not even visible via {@link getEmail} —
+   * until you redeem that link with {@link verifyEmail}.
+   *
+   * **The response deliberately tells you nothing about availability.** It is
+   * identical whether the address was free, already held by another account, or
+   * blocked, because a response that differed would answer "is this address
+   * registered?" for any address you cared to name. The practical consequence:
+   * name an address you do not control, or one already in use, and no mail will
+   * ever arrive — with no error to catch.
+   *
+   * Mirrors the Python SDK's `set_email`.
+   *
+   * @param email The address to attach. Normalised (trimmed, lowercased)
+   *   server-side, so `Alice@Example.com` and `alice@example.com` are one mailbox.
+   */
+  async setEmail(email: string, options?: CallOptions): Promise<EmailChangeResult> {
+    return this.rawRequest<EmailChangeResult>({
+      method: "POST",
+      path: "/auth/email",
+      body: { email },
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Detach any contact email from this account.
+   *
+   * Uniform and idempotent — byte-identical whether or not one was set, for the
+   * same non-enumeration reason as {@link setEmail}.
+   *
+   * Mirrors the Python SDK's `remove_email`.
+   */
+  async removeEmail(options?: CallOptions): Promise<EmailRemoveResult> {
+    return this.rawRequest<EmailRemoveResult>({
+      method: "DELETE",
+      path: "/auth/email",
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Redeem the token from the verification email.
+   *
+   * On success the address becomes attached and verified in one step; there is
+   * no intermediate state. Returns `{ email, email_verified }` — note there is
+   * **no** `status` field.
+   *
+   * The token is single-use. Every failure — a malformed token, an expired one,
+   * a replayed one, or "another account took the address meanwhile" — is one
+   * opaque 400, deliberately indistinguishable, because telling them apart would
+   * leak whether an address is spoken for.
+   *
+   * Mirrors the Python SDK's `verify_email`.
+   *
+   * @param token The token carried by the link that was mailed to you.
+   */
+  async verifyEmail(token: string, options?: CallOptions): Promise<EmailVerifyResult> {
+    return this.rawRequest<EmailVerifyResult>({
+      method: "POST",
+      path: "/auth/email/verify",
+      body: { token },
       signal: options?.signal,
     });
   }

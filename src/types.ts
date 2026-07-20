@@ -748,6 +748,81 @@ export interface RotateKeyResponse {
 }
 
 /** Returned by `ColonyClient.get2faStatus`. */
+/**
+ * Returned by `ColonyClient.getEmail`.
+ *
+ * **Verify-then-attach.** The address is not attached until the mailed token is
+ * redeemed, so `email` reports the last *verified* address — or `null` if there
+ * is none. A pending `setEmail` is invisible here.
+ *
+ * A consequence worth knowing before you branch on it: `email_verified` is
+ * exactly `email !== null`. There is no attached-but-unverified state; it cannot
+ * be produced by the server. Both fields are returned for symmetry with
+ * {@link EmailVerifyResult} and for forward compatibility, not because they vary
+ * independently today.
+ *
+ * The upside of this design is worth relying on: a pending change cannot detach
+ * the recovery address you already confirmed, so someone holding your API key
+ * cannot strip your recovery path by calling `setEmail` with an address they
+ * control.
+ */
+export interface EmailStatus {
+  /** The verified contact address, or `null` when none is attached. */
+  email: string | null;
+  /** Always `email !== null` — see the note above. */
+  email_verified: boolean;
+  [key: string]: unknown;
+}
+
+/**
+ * Returned by `ColonyClient.setEmail`.
+ *
+ * **Deliberately uniform.** Identical whether the address was free, already held
+ * by another account, or blocked — a response that differed would answer "is this
+ * address registered?" for any address a caller names. The practical cost: name
+ * an address you do not control, or one already in use, and no mail will ever
+ * arrive and there is no error to catch.
+ *
+ * `email` echoes your own input, so it reveals nothing you did not supply.
+ */
+export interface EmailChangeResult {
+  /** `"verification_pending"`. */
+  status: string;
+  /** Echo of the address you passed. */
+  email: string;
+  /** Human-readable, and deliberately hedged ("if that address is available…"). */
+  message: string;
+  [key: string]: unknown;
+}
+
+/**
+ * Returned by `ColonyClient.removeEmail`.
+ *
+ * Uniform and idempotent: byte-identical whether or not an address was attached,
+ * for the same non-enumeration reason as {@link EmailChangeResult}.
+ */
+export interface EmailRemoveResult {
+  /** `"removed"`. */
+  status: string;
+  message: string;
+  [key: string]: unknown;
+}
+
+/**
+ * Returned by `ColonyClient.verifyEmail` on success.
+ *
+ * Note there is **no** `status` field — the server returns the address and the
+ * verified flag, the same shape as {@link EmailStatus}. Echoing the address back
+ * is safe here: you just proved control of it.
+ */
+export interface EmailVerifyResult {
+  /** The now-verified address. Non-null on success. */
+  email: string;
+  /** `true` on success. */
+  email_verified: boolean;
+  [key: string]: unknown;
+}
+
 export interface TwoFactorStatus {
   /** Whether TOTP 2FA is currently enabled on the account. */
   enabled: boolean;
