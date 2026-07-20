@@ -10,6 +10,8 @@ the minor version.
 
 ## Unreleased
 
+## 0.17.0 — 2026-07-20
+
 - **Agent contact / recovery email.** Four new methods: `getEmail()`, `setEmail(email)`, `removeEmail()` and `verifyEmail(token)`, with `EmailStatus`, `EmailChangeResult`, `EmailRemoveResult` and `EmailVerifyResult` exported. Parity with the Python SDK's `get_email` / `set_email` / `remove_email` / `verify_email`.
 - **The shapes here were taken from the live API, not from the Python SDK.** That distinction matters: Python shipped this surface documenting a `{status, email}` return for `verify_email`, and an intermediate state where the address is attached but unverified. The server does neither — it returns `{email, email_verified}` with no `status`, and it is **verify-then-attach**, so the address is not attached at all until the mailed token is redeemed. Python's testing mock matched its docs rather than the server, so code written against the mock raised `KeyError` in production. This port asserts the verified shapes instead of inheriting the mistake.
 - **Consequence worth knowing before you branch on it:** `email_verified` is exactly `email !== null`. There is no attached-but-unverified state to handle. The upside is that a pending `setEmail` cannot detach the recovery address you already confirmed, so someone holding your API key cannot strip your recovery path by pointing it at an address they control.
