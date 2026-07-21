@@ -15,7 +15,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { ColonyClient } from "../src/client.js";
+import { ColonyClient, validateTotpCode } from "../src/client.js";
 import {
   ColonyAuthError,
   ColonyTwoFactorInvalidError,
@@ -214,5 +214,114 @@ describe("two-factor management methods", () => {
     expect(mock.calls[1]?.url).toContain("/auth/2fa/recovery-codes/regenerate");
     expect(bodyOf(mock, 1)).toEqual({ code: "123456" });
     expect(result.recovery_codes).toEqual(["x"]);
+  });
+});
+
+/**
+ * `totp` argument validation.
+ *
+ * Ported from colony-sdk-python#111, which came from a live incident: the 32-char
+ * base32 SECRET was passed where a code was expected, forwarded verbatim, and
+ * surfaced only as the server's `422 string_too_long` on a field the caller had
+ * never named.
+ *
+ * The no-2FA path is asserted FIRST and deliberately: validation must never run
+ * when nothing was supplied, or this patch would break every account without 2FA.
+ */
+describe("totp code validation", () => {
+  it("never runs when no totp is configured — the no-2FA request is unchanged", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ id: "u1", username: "me" });
+
+    await makeClient(mock).getMe();
+
+    // No totp_code key at all, not a null one.
+    expect(bodyOf(mock, 0)).toEqual({ api_key: "col_test_key" });
+  });
+
+  it.each(["123456", "1234567", "12345678"])(
+    "accepts a %s-length TOTP code (RFC 6238 allows 6, 7 and 8)",
+    (code) => {
+      expect(validateTotpCode(code)).toBe(code);
+    },
+  );
+
+  it.each(["a3f9c1d0e7b45268", "0123456789abcdef", "abc123def4"])(
+    "accepts recovery code %s",
+    (code) => {
+      // Recovery codes share the totp_code field, which is why the server caps
+      // at 16 rather than 8. A strict /^\d{6}$/ would reject the exact credential
+      // you need when your authenticator is unavailable.
+      // The first two are the real observed shape: 16 lowercase hex, no separators.
+      expect(validateTotpCode(code)).toBe(code);
+    },
+  );
+
+  it("rejects the base32 secret by name", () => {
+    const secret = "SROSG7JW2QSCX4IWEQ5ZRW6IVDTEUHUX"; // 32 chars, base32
+    expect(() => validateTotpCode(secret)).toThrow(/secret/i);
+    expect(() => validateTotpCode(secret)).toThrow(/authenticator\.now\(\)/);
+    expect(() => validateTotpCode(secret)).toThrow(/32/);
+  });
+
+  it.each(["12345", "1234", "123"])(
+    "diagnoses %s as a stripped leading zero rather than a generic error",
+    (code) => {
+      // ~10% of codes start with '0' and 1% with '00', so String(Number(code))
+      // fails on roughly one attempt in ten — intermittently, which reads as a
+      // flaky server. The message has to name it.
+      expect(() => validateTotpCode(code)).toThrow(/leading zero/);
+      expect(() => validateTotpCode(code)).toThrow(/INTERMITTENTLY/);
+    },
+  );
+
+  it.each(["  123456 ", "123 456", "123\t456", "123456\n"])(
+    "rejects %j rather than trimming it",
+    (code) => {
+      // Not normalised: consumers are programs, not humans copying off a phone.
+      expect(() => validateTotpCode(code)).toThrow(/whitespace/);
+    },
+  );
+
+  it.each(["AB12-CD34-EF", "a3f9:c1d0:e7b4", "1234_5678_90ab", "12.34.56"])(
+    "rejects separator-bearing %s",
+    (code) => {
+      // No observed Colony code of either kind contains a non-alphanumeric.
+      expect(() => validateTotpCode(code)).toThrow(RangeError);
+    },
+  );
+
+  it("rejects a number, naming the leading-zero hazard", () => {
+    expect(() => validateTotpCode(12345 as unknown as string)).toThrow(TypeError);
+    expect(() => validateTotpCode(12345 as unknown as string)).toThrow(/leading zero/);
+  });
+
+  it("validates the value a CALLABLE returns, including an async one", async () => {
+    // The callable form is the recommended one, so it is the likelier place to
+    // wire the wrong value in and never notice.
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    const client = makeClient(mock, {
+      totp: () => "SROSG7JW2QSCX4IWEQ5ZRW6IVDTEUHUX",
+    });
+    await expect(client.getMe()).rejects.toThrow(/secret/i);
+
+    const mock2 = new MockFetch();
+    withAuthToken(mock2);
+    const asyncClient = makeClient(mock2, {
+      totp: async () => "SROSG7JW2QSCX4IWEQ5ZRW6IVDTEUHUX",
+    });
+    await expect(asyncClient.getMe()).rejects.toThrow(/secret/i);
+  });
+
+  it("still sends a valid code from a callable", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ id: "u1", username: "me" });
+
+    await makeClient(mock, { totp: () => "654321" }).getMe();
+
+    expect(bodyOf(mock, 0)).toEqual({ api_key: "col_test_key", totp_code: "654321" });
   });
 });
