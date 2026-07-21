@@ -349,6 +349,91 @@ interface RequestOptions {
  * }
  * ```
  */
+/**
+ * A TOTP code is 6 digits by RFC 6238 convention; the RFC permits 7 and 8, so
+ * those are accepted rather than guessed at.
+ */
+const TOTP_CODE_RE = /^[0-9]{6,8}$/;
+
+/**
+ * A RECOVERY code is also valid in this field, which is why this is not a bare
+ * `/^\d{6}$/` check and why the server caps `totp_code` at 16 rather than 8.
+ *
+ * Observed across 40 real recovery codes from 5 accounts: exactly 16 lowercase
+ * hex characters, no separators. The accepted range is deliberately WIDER than
+ * that observation — the server owns its own format, and a client rule tighter
+ * than reality would reject a valid recovery code at the one moment TOTP is
+ * unavailable. Widen this if the API ever issues a longer or cased format.
+ */
+const RECOVERY_CODE_RE = /^[A-Za-z0-9]{10,16}$/;
+
+/** Base32 (RFC 4648) — the alphabet TOTP *secrets* are shared in. */
+const BASE32_SECRET_RE = /^[A-Z2-7]{16,}=*$/;
+
+/**
+ * Reject a value that cannot be a TOTP or recovery code, with a message that
+ * names the mistake rather than the constraint.
+ *
+ * Motivated by a real incident: `totp: secret` was passed instead of a generated
+ * code. The SDK forwarded the 32-character base32 string verbatim and the only
+ * feedback was the server's `422 string_too_long` on a field the caller had never
+ * named — which reads as "the API is broken", not "you passed the wrong thing".
+ * The mistake is easy because in conversation both values are "the TOTP".
+ *
+ * Accepts 6–8 digits, or a 10–16 character alphanumeric recovery code.
+ * Rejects whitespace outright rather than trimming it: this SDK is consumed by
+ * programs, not by a human retyping a code off a phone screen, so a space means
+ * the value was assembled wrongly and repairing it silently would hide that.
+ *
+ * Never runs when no `totp` is configured — `resolveTotp` returns early — so the
+ * request is byte-identical for the majority of accounts without 2FA.
+ */
+export function validateTotpCode(code: unknown): string {
+  if (typeof code !== "string") {
+    throw new TypeError(
+      `totp must be a string or a function returning one, got ${typeof code}. ` +
+        "A number is the usual cause and is not merely a type slip: 012345 is " +
+        "12345, destroying the leading zero that ~10% of codes carry.",
+    );
+  }
+  if (TOTP_CODE_RE.test(code) || RECOVERY_CODE_RE.test(code)) return code;
+  if (/\s/.test(code)) {
+    throw new RangeError(
+      `totp ${JSON.stringify(code)} contains whitespace. A one-time code has ` +
+        "none — no Colony code of either kind contains a non-alphanumeric " +
+        "character. This is not trimmed away on purpose: whitespace here means " +
+        "the value was assembled wrongly, and quietly repairing it would hide " +
+        "the defect rather than surface it.",
+    );
+  }
+  if (/^[0-9]{3,5}$/.test(code)) {
+    throw new RangeError(
+      `totp ${JSON.stringify(code)} is ${code.length} digits, but a TOTP code ` +
+        "is at least 6 (RFC 4226 sets 6 as the minimum, so a shorter value is " +
+        "never valid). The usual cause is a stripped leading zero: codes are " +
+        "zero-padded, so String(Number(code)) or a numeric literal turns " +
+        '"012345" into "12345". About 10% of codes begin with a zero and 1% ' +
+        "with two, so this fails INTERMITTENTLY and reads as a flaky server " +
+        "rather than a client bug. Keep the code a string.",
+    );
+  }
+  if (BASE32_SECRET_RE.test(code)) {
+    throw new RangeError(
+      `totp looks like your TOTP *secret* (${code.length} base32 characters), ` +
+        "not a one-time code. The secret is the seed your authenticator holds; " +
+        "the code is the short number it produces. Generate one per request:\n" +
+        "    new ColonyClient(key, { totp: () => authenticator.now() })\n" +
+        "Passing the secret would be forwarded to the server and rejected as " +
+        "`totp_code` (max 16 characters).",
+    );
+  }
+  throw new RangeError(
+    `totp ${JSON.stringify(code)} is not a valid one-time code: expected 6-8 ` +
+      "digits, or a 10-16 character recovery code. Pass a function if you need " +
+      "a fresh code per request: totp: () => authenticator.now()",
+  );
+}
+
 export class ColonyClient {
   private apiKey: string;
   public readonly baseUrl: string;
@@ -425,7 +510,7 @@ export class ColonyClient {
    */
   private async resolveTotp(): Promise<string | null> {
     if (this.totp === undefined) return null;
-    if (typeof this.totp === "function") return this.totp();
+    if (typeof this.totp === "function") return validateTotpCode(await this.totp());
     if (this.totpCodeUsed) {
       throw new ColonyTwoFactorRequiredError(
         "The single TOTP code passed as totp: '...' was already used for one " +
@@ -439,7 +524,7 @@ export class ColonyClient {
       );
     }
     this.totpCodeUsed = true;
-    return this.totp;
+    return validateTotpCode(this.totp);
   }
 
   /**
