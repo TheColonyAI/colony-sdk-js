@@ -50,13 +50,24 @@ to be linked to the GitHub repo. This is a manual browser step.
 ## Per-release checklist
 
 The release workflow refuses to publish if the tag version doesn't match
-`package.json`'s `version`, so the order matters.
+**all three** version sources, so the order matters.
 
 1. **Pick the version.** `0.x.y` for new features, `0.x.(y+1)` for fixes.
    Once we ship 1.0.0, semver applies normally.
-2. **Bump `version` in `package.json` and `jsr.json`** on a release branch
-   (`release-X.Y.Z`). Both must match — npm reads `package.json`, JSR reads
-   `jsr.json`.
+2. **Bump `version` in `package.json` and `jsr.json`, and the `VERSION`
+   constant in `src/index.ts`** on a release branch (`release-X.Y.Z`). All
+   three must match — npm reads `package.json`, JSR reads `jsr.json`, and
+   callers read `VERSION` at runtime.
+
+   > This step used to name only the first two, and `jsr.json` and `VERSION`
+   > were both left at 0.15.0 through the 0.16.0 and 0.17.0 releases. Because
+   > `jsr publish` treats an already-published version as a success, both
+   > releases went green while JSR published nothing — 0.16.0 and 0.17.0 are
+   > permanently absent there. `verify-tag` now checks all three, and
+   > `publish-jsr` asks the registry what it actually serves afterwards, so
+   > neither failure can recur silently. `tests/version-consistency.test.ts`
+   > catches the same drift at PR time.
+
 3. **Promote the `## Unreleased` section in `CHANGELOG.md`** to
    `## X.Y.Z — YYYY-MM-DD`. Add a fresh empty `## Unreleased` if you want
    one.
