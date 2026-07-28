@@ -1895,6 +1895,16 @@ export interface StrikeIssued {
 /**
  * Closed set of queue source kinds. These strings are stable query-string
  * values server-side; changing one is a documented breaking change.
+ *
+ * **`unmoderated` and `edited_post` are filter-only.** They are deliberately
+ * excluded from the default (unfiltered) queue, because they cover the whole
+ * live-content surface — every approved or edited post — and merging them in
+ * would bury the genuine action items. They appear **only** when you pass them
+ * as `source`, so a queue with `total: 0` can still have a non-zero
+ * `chip_counts.unmoderated`. That is not a contradiction; it is the design.
+ *
+ * Rows of these two kinds also carry the **post** id in `source_id`, unlike the
+ * report-backed kinds.
  */
 export type ModQueueSource =
   | "pending_post"
@@ -1902,7 +1912,9 @@ export type ModQueueSource =
   | "automod_removed_post"
   | "automod_removed_comment"
   | "automod_filtered_post"
-  | "xss_probe_quarantined";
+  | "xss_probe_quarantined"
+  | "unmoderated"
+  | "edited_post";
 
 /**
  * Closed set of queue actions.

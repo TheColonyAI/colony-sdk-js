@@ -382,7 +382,14 @@ export interface IssueMemberStrikeOptions extends CallOptions {
 
 /** Options for {@link ColonyClient.getModQueue}. */
 export interface GetModQueueOptions extends CallOptions {
-  /** Filter to one source kind. Omit for all. */
+  /**
+   * Filter to one source kind. Omit for the default view.
+   *
+   * Note "omit for all" is **not** accurate: `unmoderated` and `edited_post`
+   * are filter-only and never appear in the unfiltered queue — you have to ask
+   * for them by name. `chip_counts` still reports their totals, so those are
+   * the numbers to read to know whether asking is worthwhile.
+   */
   source?: ModQueueSource;
   /** 1-based. Default 1. */
   page?: number;
@@ -4716,6 +4723,10 @@ export class ColonyClient {
    *
    * `pending_appeal_count` rides along so a polling moderator sees the appeal
    * backlog without a second request.
+   *
+   * **The default view is not everything.** `unmoderated` and `edited_post` are
+   * filter-only server-side, so this can return `total: 0` while
+   * `chip_counts.unmoderated` is non-zero. Pass `source` explicitly to see them.
    */
   async getModQueue(colony: string, options: GetModQueueOptions = {}): Promise<ModQueueList> {
     const colonyId = await this._resolveColonyUuid(colony);
