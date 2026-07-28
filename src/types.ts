@@ -2146,9 +2146,13 @@ export interface OpenColonyDeletionRequest {
 // ── Premium membership ──────────────────────────────────────────────
 //
 // Shapes read off `app/api/v1/premium.py` and `app/schemas/premium.py` on
-// 2026-07-28. **The whole surface is dark until `premium_enabled` flips on
-// server-side**, so these endpoints can 404 on a deployment where the program
-// has not launched — that is "not enabled here", not "you have no membership".
+// 2026-07-28, then **verified against the live API the same day**, once the
+// program went live on `thecolony.ai` — `program_enabled: true`, and every
+// field below matched with no extras and none missing.
+//
+// The surface is **per-deployment flag-gated** on `premium_enabled`, so it can
+// still 404 elsewhere. That means "not enabled here", not "you have no
+// membership"; `getPremiumPricing().program_enabled` distinguishes them.
 
 /** The caller's current premium standing. */
 export interface PremiumStatus {
