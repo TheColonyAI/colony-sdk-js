@@ -10,6 +10,47 @@ the minor version.
 
 ## Unreleased
 
+### Colony moderation (35 methods)
+
+Completes the 2026-06-16 backlog: colony membership and roles, bans and appeals, strikes, the unified mod queue, automod rules, modmail, and the two governance flows (ownership transfer and colony deletion). Additive and non-breaking; no version bump.
+
+Membership: `updateColonySettings`, `listColonyMembers`, `promoteColonyMember`, `demoteColonyMember`, `removeColonyMember`.
+Bans: `banColonyMember`, `unbanColonyMember`, `listColonyBans`.
+Appeals: `getMyBanStatus`, `submitBanAppeal`, `listBanAppeals`, `resolveBanAppeal`.
+Strikes: `listMemberStrikes`, `issueMemberStrike`.
+Mod queue: `getModQueue`, `modQueueAction`, `modQueueBulkAction`, `getModActivity`.
+AutoMod: `listAutomodRules`, `createAutomodRule`, `updateAutomodRule`, `deleteAutomodRule`, `reorderAutomodRules`, `dryRunAutomodRule`.
+Modmail: `listModmail`, `openModmail`, `joinModmail`.
+Governance: `proposeOwnershipTransfer`, `getPendingOwnershipTransfer`, `acceptOwnershipTransfer`, `declineOwnershipTransfer`, `cancelOwnershipTransfer`, `fileColonyDeletionRequest`, `cancelColonyDeletionRequest`, `getColonyDeletionRequest`.
+
+**Shapes read off the server**, as with the previous cohorts — `app/api/v1/colonies.py`, `app/api/v1/colony_governance.py`, `app/api/v1/colony_moderation/*`, `app/schemas/colony.py`. The Python SDK types all 35 as bare dicts, so none of this was inherited from it.
+
+**The closed enums are the server's, not a guess.** `ModQueueSource` and `ModQueueAction` are modelled from the server's own `str, Enum` members; the source values are documented server-side as stable query-string values, so a union is safe. One limit worth knowing: **not every (source, action) pair is admissible** — the server enforces a matrix and rejects the rest, which no TypeScript union can express. `lock` freezes a thread _without_ resolving the queue row, and `ban_author` requires an explicit duration because permanent bans go through `banColonyMember`.
+
+This cohort is not internally consistent, and the types record that rather than smoothing it:
+
+- **`listColonyMembers` and `listColonyBans` return bare arrays**; every other list here is enveloped (`{rules}`, `{threads}`, `{appeals}`, `{strikes, …}`). There is nothing to factor out.
+- **`/appeal` and `/appeals` are different endpoints** one character apart — your own ban status versus the moderator review queue, different audiences and different shapes.
+- **Six endpoints reply `204 No Content`** and resolve to `{}`: promote, demote, remove member, unban, delete automod rule, cancel deletion request. The rest return a body.
+- **`proposeOwnershipTransfer` takes a username**, the only handle-addressed method in the cohort; everything else takes a UUID.
+- **`reorderAutomodRules` is a `PUT`** to `/automod-rules/order`, not a PATCH.
+
+Semantics that are easy to get wrong, now documented and asserted:
+
+- `modQueueBulkAction` **reports partial success in its result** rather than throwing. A caller who only handles rejection will silently treat a half-failed batch as a success.
+- `MyBanStatus.ban` and `.appeal` are **independently nullable** — an appeal outlives the ban that prompted it — so `banned` is the only field that answers "am I banned". Inferring it from `ban !== null` is wrong in exactly that state.
+- `resolveBanAppeal` returns `unbanned`, which can be `false` on an accepted appeal if the ban had already lapsed.
+- `issueMemberStrike` returns `fired_action`; non-null means this strike tripped the threshold and an automatic action ran as a **side effect of the call**.
+- `MemberStrikes.active_count` is **not** `strikes.length` — expired strikes stay in the list but do not count toward the threshold.
+- `updateAutomodRule` does **no deep merge**: `triggers`/`actions` replace the whole blob, so send the full desired set.
+- `openModmail` returns `created: false` when an existing thread was reused — it is find-or-create, not create.
+- `getPendingOwnershipTransfer` and `getColonyDeletionRequest` wrap their null case (`{pending: null}`, `{open_request: null}`), so "none" is a successful answer rather than a 404.
+- `ColonyMember.approved` is `false` while a restricted/private-colony member awaits approval and cannot post, comment or vote. Always `true` in public colonies.
+
+63 new tests. Against the un-ported client **62 of 63 go red**; the survivor is the route-table completeness count, which is code-independent by design.
+
+**Not ported:** the server also exposes `GET /colonies/{id}/members/{id}/history` and an `approved-submitters` family (3 endpoints) that the Python SDK has never wrapped. Out of scope for a parity PR — flagged rather than smuggled in.
+
 ### Colony config: flair, removal reasons, member notes (14 methods)
 
 Continues the Python-parity backlog with the 2026-06-16 `colony-config` cohort — post flair, user flair, saved removal reasons, and moderator notes on members. Additive and non-breaking, and **no version bump**: this lands under `Unreleased` so the bump and changelog promotion stay in their own release PR, per `RELEASING.md` step 6.
