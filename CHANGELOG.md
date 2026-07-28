@@ -10,6 +10,8 @@ the minor version.
 
 ## Unreleased
 
+## 0.19.1 — 2026-07-28
+
 ### Fixed
 
 - **`ModQueueSource` was missing two of the eight kinds the server accepts.** `unmoderated` and `edited_post` are valid `?source=` values — measured against the live API: all eight `chip_counts` keys return 200, a bogus value returns 422 — but 0.19.0 shipped a union of six, so `getModQueue(colony, { source: "unmoderated" })` failed to compile against a call the server answers.
