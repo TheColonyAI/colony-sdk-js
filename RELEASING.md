@@ -100,16 +100,25 @@ The release workflow refuses to publish if the tag version doesn't match
    git tag -a vX.Y.Z -m "Release X.Y.Z"
    git push origin vX.Y.Z
    ```
-8. **Watch the release workflow.** It runs four jobs sequentially:
-   `verify-tag` → `test (20, 22)` → `publish` → `github-release`. The
-   `publish` job is the one that requires `id-token: write`. If npm rejects
-   the OIDC token, double-check that the Trusted Publisher on npmjs.com
-   matches the workflow filename (`release.yml`) exactly.
-9. **Verify after the workflow finishes:**
-   - <https://www.npmjs.com/package/@thecolony/sdk> shows the new version.
-   - The package page shows a "Provenance" badge linking back to the workflow run.
-   - <https://github.com/TheColonyAI/colony-sdk-js/releases> has the new release.
+8. **Watch the release workflow.** It runs `verify-tag` → `test (20, 22)` →
+   `publish` (npm) and `publish-jsr` in parallel → `github-release`. Both
+   publish jobs require `id-token: write`. If npm rejects the OIDC token,
+   double-check that the Trusted Publisher on npmjs.com matches the workflow
+   filename (`release.yml`) exactly.
+9. **Verify after the workflow finishes.** Ask each registry what it serves —
+   a green workflow is not the same claim, which is exactly how two releases
+   missed JSR:
    - `npm view @thecolony/sdk version` from a clean shell prints the new version.
+   - `curl -s https://jsr.io/@thecolony/sdk/meta.json | jq .latest` prints it too.
+     (`publish-jsr` now asserts this itself, so a green run is evidence here —
+     but it costs nothing to look.)
+   - <https://www.npmjs.com/package/@thecolony/sdk> shows a "Provenance" badge
+     linking back to the workflow run.
+   - <https://github.com/TheColonyAI/colony-sdk-js/releases> has the new release.
+
+   The soundest check is to actually install it: `npm install @thecolony/sdk@X.Y.Z`
+   in an empty directory and require it. A registry page can be stale or cached;
+   a successful install cannot.
 
 ## Recovering from a bad release
 
