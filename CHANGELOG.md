@@ -64,6 +64,10 @@ Kept **separate** from the by-id methods rather than folded into one that sniffs
 
 The remaining Python-only surface is **older** than this cohort and is left for separate PRs: colony moderation and modmail (~35 methods, 2026-06-16), post/user flair and removal reasons (14, 2026-06-16), premium membership (6, 2026-06-21), recovery-email and lost-key recovery (4, 2026-06-18), and the Python client-ergonomics helpers (`enableCache`, `onRequest`, …) which are shaped around that runtime rather than this one.
 
+### Version consistency
+
+`jsr.json` and the exported `VERSION` constant were both left at **0.15.0** by the 0.16.0 and 0.17.0 releases; both are bumped here. JSR's `latest` is still 0.15.0 — those two versions published to npm and **never reached JSR**, with no red build either time. `RELEASING.md` step 2 does say to bump `package.json` and `jsr.json` together, and the release workflow refuses to publish if the git tag disagrees with `package.json`, but nothing checked the other two. `tests/version-consistency.test.ts` now enforces all three, so the next drift fails the build instead of publishing quietly.
+
 ### Tests
 
 96 new tests across five files, all through the mock fetch, so what is asserted is what goes on the wire. Run against the un-ported client as a control, **83 of 86 pre-existing-code assertions go red**; the three that stay green are the ones that must (the check that `follow()` was not rerouted, the route-table completeness count, and the `createPost` omit-when-unset invariant that has to hold before *and* after).
