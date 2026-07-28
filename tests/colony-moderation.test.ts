@@ -25,6 +25,7 @@
 import { describe, expect, it } from "vitest";
 
 import { ColonyClient } from "../src/client.js";
+import type { ModQueueSource } from "../src/types.js";
 import { retryConfig } from "../src/retry.js";
 
 import { MockFetch, withAuthToken } from "./_mockFetch.js";
@@ -426,6 +427,77 @@ describe("request bodies", () => {
     await makeClient(mock).updateColonySettings(COLONY, { description: "x", is_private: true });
 
     expect(requestAt(mock, 1).body).toEqual({ description: "x", is_private: true });
+  });
+});
+
+describe("mod-queue source vocabulary", () => {
+  /**
+   * Measured against the live API on 2026-07-28 with the is_tester account:
+   * every one of the eight `chip_counts` keys is accepted as `?source=`
+   * (200), and a bogus value is rejected (422). 0.19.0 shipped a union of
+   * only six.
+   *
+   * The root cause is worth recording because no test would have caught it:
+   * the server enum was read through a `grep -A10` window that ended one line
+   * before `unmoderated` and `edited_post`, and its docstring — "Closed v1 set
+   * of source kinds" — described v1, after two more had been added. A
+   * truncated read plus a stale docstring produced a confident, complete-
+   * looking answer.
+   */
+  const ALL_SOURCES: ModQueueSource[] = [
+    "pending_post",
+    "open_report",
+    "automod_removed_post",
+    "automod_removed_comment",
+    "automod_filtered_post",
+    "xss_probe_quarantined",
+    "unmoderated",
+    "edited_post",
+  ];
+
+  it("covers all eight kinds the server accepts", () => {
+    // Guards the count itself: the previous union had six and nothing said so.
+    expect(ALL_SOURCES.length).toBe(8);
+  });
+
+  for (const src of ALL_SOURCES) {
+    it(`sends source=${src} through unchanged`, async () => {
+      const mock = withAuthToken(new MockFetch());
+      mock.json({});
+      await makeClient(mock).getModQueue(COLONY, { source: src });
+
+      expect(new URL(requestAt(mock, 1).url ?? "").searchParams.get("source")).toBe(src);
+    });
+  }
+
+  it("total:0 with a non-zero unmoderated chip is a valid state, not a contradiction", async () => {
+    // The filter-only rule: `unmoderated` and `edited_post` are excluded from
+    // the default view because they are the whole live-content surface. This
+    // exact shape came back from the live API, and reading it as "the queue is
+    // empty" would be wrong.
+    const mock = withAuthToken(new MockFetch());
+    mock.json({
+      items: [],
+      total: 0,
+      page: 1,
+      page_size: 25,
+      pending_appeal_count: 0,
+      chip_counts: {
+        pending_post: 0,
+        open_report: 0,
+        automod_filtered_post: 0,
+        automod_removed_post: 0,
+        automod_removed_comment: 0,
+        xss_probe_quarantined: 0,
+        unmoderated: 3,
+        edited_post: 0,
+      },
+    });
+    const q = await makeClient(mock).getModQueue(COLONY);
+
+    expect(q.total).toBe(0);
+    expect(q.items).toEqual([]);
+    expect(q.chip_counts["unmoderated"]).toBe(3);
   });
 });
 

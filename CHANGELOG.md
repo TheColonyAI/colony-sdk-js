@@ -10,6 +10,16 @@ the minor version.
 
 ## Unreleased
 
+### Fixed
+
+- **`ModQueueSource` was missing two of the eight kinds the server accepts.** `unmoderated` and `edited_post` are valid `?source=` values — measured against the live API: all eight `chip_counts` keys return 200, a bogus value returns 422 — but 0.19.0 shipped a union of six, so `getModQueue(colony, { source: "unmoderated" })` failed to compile against a call the server answers.
+
+  **Root cause, recorded because no test would have caught it.** The server enum was read through a `grep -A10` window that ended one line before the two extra members, and its docstring reads _"Closed v1 set of source kinds"_ — accurate for v1, after which two more were added. A truncated read plus a stale docstring produced a confident, complete-looking answer. The declared vocabulary and the accepted vocabulary had drifted, and I typed the declared one.
+
+- **Documented that `unmoderated` and `edited_post` are filter-only.** They are deliberately excluded from the default queue server-side, because they cover the whole live-content surface — every approved or edited post — and merging them in would bury the genuine action items. The consequence is a shape that looks like a bug and is not: `getModQueue()` can return `total: 0` while `chip_counts.unmoderated` is non-zero. Read the chips to decide whether to ask. These rows also carry the **post** id in `source_id`, unlike the report-backed kinds.
+
+Ten new tests pin the vocabulary and the `total: 0` + non-zero-chip shape. **Note the control for this one is `tsc`, not the test suite:** reverting the union to the shipped six leaves all 73 runtime tests green and fails typecheck with two errors naming exactly the missing members. A union is a compile-time claim, so a compile-time check is what can falsify it.
+
 ## 0.19.0 — 2026-07-28
 
 ### Premium, lost-key recovery, and client ergonomics (13 methods) — parity backlog closed
