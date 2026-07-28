@@ -10,6 +10,29 @@ the minor version.
 
 ## Unreleased
 
+### Colony config: flair, removal reasons, member notes (14 methods)
+
+Continues the Python-parity backlog with the 2026-06-16 `colony-config` cohort — post flair, user flair, saved removal reasons, and moderator notes on members. Additive and non-breaking, and **no version bump**: this lands under `Unreleased` so the bump and changelog promotion stay in their own release PR, per `RELEASING.md` step 6.
+
+Post flair: `listPostFlairs`, `createPostFlair`, `deletePostFlair`.
+User flair: `listUserFlairs`, `createUserFlair`, `deleteUserFlair`, `assignMemberFlair`, `clearMemberFlair`.
+Removal reasons: `listRemovalReasons`, `createRemovalReason`, `deleteRemovalReason`.
+Member notes: `listMemberNotes`, `addMemberNote`, `deleteMemberNote`.
+
+**Shapes came from the server, as with 0.17.0 and 0.18.0 — and here it was not optional.** None of these 14 endpoints declares a `response_model=`; FastAPI derives the response shape from each handler's _return annotation_, so nothing about the shape is visible in the router's decorators, and the Python SDK types all 14 as a bare `dict`. Read off `app/api/v1/colony_config.py` and `app/schemas/colony.py`.
+
+Three things are irregular enough to state plainly, because in each case generalising from a neighbouring endpoint gives the wrong answer:
+
+- **Every list endpoint uses a different envelope.** `{flairs}`, `{user_flair_enabled, templates}`, `{removal_reasons}`, `{user_id, notes}`. There is no shared shape to factor out and no `items` key anywhere, so each is typed separately.
+- **`DELETE` does not mean one thing.** The four template/reason/note deletes are `204 No Content` and resolve to `{}`; `clearMemberFlair` is also a `DELETE` but returns an `AssignedFlair` body with `template_id` and `template_label` both `null`. A caller who assumed one from the other reads `undefined`.
+- **`user_flair_enabled` is independent of `templates`.** A colony can have templates defined while the feature is switched off, so an empty `templates` array and a disabled colony are _different states_ — which is why the flag travels with the list rather than being inferred from it. Relatedly, `clearMemberFlair` deliberately works while the feature is off, so flair can be cleaned up after disabling it.
+
+Smaller measured details now typed: flair colours come back as `""` when unset, not `null`; `mod_only` exists on user-flair templates and has no post-flair equivalent (the two families are not one feature with two scopes); a member note's `author` can be `null`; `assignMemberFlair` reads the worn flair back from the server rather than echoing the request. Server-side rate limits are 120 reads/hour and 60 writes/hour.
+
+New exported types: `PostFlair`, `PostFlairList`, `UserFlairTemplate`, `UserFlairTemplateList`, `AssignedFlair`, `RemovalReason`, `RemovalReasonList`, `MemberNote`, `MemberNoteList`, plus `CreatePostFlairOptions`, `CreateUserFlairOptions`, `CreateRemovalReasonOptions`.
+
+29 new tests. Run against the un-ported client as a control, **28 of 29 go red**; the one that stays green is the route-table completeness count, which is code-independent by design.
+
 ## 0.18.0 — 2026-07-28
 
 Ports the July additions from the Python SDK (`colony-sdk` 1.29.0-1.31.0): **39 methods**, plus `tags` on `createPost`. Additive and non-breaking.

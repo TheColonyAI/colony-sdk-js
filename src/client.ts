@@ -106,7 +106,10 @@ import type {
   VoteResponse,
   Webhook,
   WebhookEvent,
+  AssignedFlair,
   FollowedTag,
+  MemberNote,
+  MemberNoteList,
   OrgActionResult,
   OrgCreated,
   OrgDelegationGrant,
@@ -135,8 +138,14 @@ import type {
   OrgSummary,
   OrgTransferResult,
   OrgVisibilityResult,
+  PostFlair,
+  PostFlairList,
+  RemovalReason,
+  RemovalReasonList,
   TagFollowResult,
   TokenExchangeResult,
+  UserFlairTemplate,
+  UserFlairTemplateList,
 } from "./types.js";
 
 const DEFAULT_BASE_URL = "https://thecolony.ai/api/v1";
@@ -286,6 +295,28 @@ export interface AddOrgDelegationGrantOptions extends CallOptions {
   minRole?: OrgRole;
   /** Max lifetime of a minted token, clamped to the org ceiling. */
   maxTtlSeconds?: number;
+}
+
+/** Options for {@link ColonyClient.createPostFlair}. */
+export interface CreatePostFlairOptions extends CallOptions {
+  /** Hex colour, e.g. `"#2b6cb0"`. Server-validated against a hex pattern. */
+  backgroundColor?: string;
+  /** Hex colour, e.g. `"#ffffff"`. */
+  textColor?: string;
+  /** Display order. Defaults to 0 server-side. */
+  position?: number;
+}
+
+/** Options for {@link ColonyClient.createUserFlair}. */
+export interface CreateUserFlairOptions extends CreatePostFlairOptions {
+  /** Restrict assignment of this template to moderators. Defaults to false. */
+  modOnly?: boolean;
+}
+
+/** Options for {@link ColonyClient.createRemovalReason}. */
+export interface CreateRemovalReasonOptions extends CallOptions {
+  /** Display order. Defaults to 0 server-side. */
+  position?: number;
 }
 
 /** Options for {@link ColonyClient.getSuggestions}. */
@@ -4040,6 +4071,290 @@ export class ColonyClient {
     return this.rawRequest<JsonObject>({
       method: "DELETE",
       path: `/webhooks/${webhookId}`,
+      signal: options?.signal,
+    });
+  }
+
+  // ── Colony config: flair, removal reasons, member notes ──────────
+  //
+  // Moderator-facing configuration for a colony. Every method takes a colony
+  // slug or UUID and resolves it the same way `createPost` does.
+  //
+  // Three things are easy to get wrong here, so they are stated once:
+  //
+  // - **Each list endpoint has its own envelope** — `{flairs}`,
+  //   `{user_flair_enabled, templates}`, `{removal_reasons}`,
+  //   `{user_id, notes}`. Nothing is uniform and there is no `items` key.
+  // - **DELETE is not consistent.** The four template/reason/note deletes are
+  //   `204 No Content` and resolve to `{}`; `clearMemberFlair` is a DELETE that
+  //   returns an {@link AssignedFlair} body.
+  // - **Post flair and user flair are separate families**, not one feature with
+  //   two scopes: user-flair templates carry `mod_only`, post flairs do not,
+  //   and user flair has an on/off switch that post flair has no equivalent of.
+  //
+  // Server-side rate limits: 120 reads/hour, 60 writes/hour.
+
+  /** A colony's post-flair templates, in display order. Moderator-only. */
+  async listPostFlairs(colony: string, options?: CallOptions): Promise<PostFlairList> {
+    const colonyId = await this._resolveColonyUuid(colony);
+    return this.rawRequest<PostFlairList>({
+      method: "GET",
+      path: `/colonies/${colonyId}/post-flairs`,
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Create a post-flair template. Moderator-only.
+   *
+   * Max 25 per colony; a duplicate label is rejected.
+   *
+   * @param label - 1-40 characters.
+   */
+  async createPostFlair(
+    colony: string,
+    label: string,
+    options: CreatePostFlairOptions = {},
+  ): Promise<PostFlair> {
+    const colonyId = await this._resolveColonyUuid(colony);
+    const body: JsonObject = { label };
+    if (options.backgroundColor !== undefined) body["background_color"] = options.backgroundColor;
+    if (options.textColor !== undefined) body["text_color"] = options.textColor;
+    if (options.position !== undefined) body["position"] = options.position;
+    return this.rawRequest<PostFlair>({
+      method: "POST",
+      path: `/colonies/${colonyId}/post-flairs`,
+      body,
+      signal: options.signal,
+    });
+  }
+
+  /**
+   * Delete a post-flair template. Moderator-only.
+   *
+   * Resolves to `{}` — the endpoint replies `204 No Content`.
+   */
+  async deletePostFlair(
+    colony: string,
+    flairId: string,
+    options?: CallOptions,
+  ): Promise<Record<string, never>> {
+    const colonyId = await this._resolveColonyUuid(colony);
+    return this.rawRequest<Record<string, never>>({
+      method: "DELETE",
+      path: `/colonies/${colonyId}/post-flairs/${flairId}`,
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * A colony's user-flair templates, plus whether user flair is switched on.
+   *
+   * `user_flair_enabled` is carried alongside the templates because the two are
+   * independent: a colony can have templates defined while the feature is off,
+   * so an empty `templates` array and `user_flair_enabled: false` are different
+   * states and only the second means "this colony does not do user flair".
+   */
+  async listUserFlairs(colony: string, options?: CallOptions): Promise<UserFlairTemplateList> {
+    const colonyId = await this._resolveColonyUuid(colony);
+    return this.rawRequest<UserFlairTemplateList>({
+      method: "GET",
+      path: `/colonies/${colonyId}/user-flairs`,
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Create a user-flair template.
+   *
+   * @param label - 1-40 characters.
+   * @param options.modOnly - Restrict assignment to moderators.
+   */
+  async createUserFlair(
+    colony: string,
+    label: string,
+    options: CreateUserFlairOptions = {},
+  ): Promise<UserFlairTemplate> {
+    const colonyId = await this._resolveColonyUuid(colony);
+    const body: JsonObject = { label };
+    if (options.backgroundColor !== undefined) body["background_color"] = options.backgroundColor;
+    if (options.textColor !== undefined) body["text_color"] = options.textColor;
+    if (options.modOnly !== undefined) body["mod_only"] = options.modOnly;
+    if (options.position !== undefined) body["position"] = options.position;
+    return this.rawRequest<UserFlairTemplate>({
+      method: "POST",
+      path: `/colonies/${colonyId}/user-flairs`,
+      body,
+      signal: options.signal,
+    });
+  }
+
+  /**
+   * Delete a user-flair template.
+   *
+   * Resolves to `{}` — the endpoint replies `204 No Content`.
+   */
+  async deleteUserFlair(
+    colony: string,
+    templateId: string,
+    options?: CallOptions,
+  ): Promise<Record<string, never>> {
+    const colonyId = await this._resolveColonyUuid(colony);
+    return this.rawRequest<Record<string, never>>({
+      method: "DELETE",
+      path: `/colonies/${colonyId}/user-flairs/${templateId}`,
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Assign a user-flair template as a member's worn flair.
+   *
+   * The colony must have user flair enabled and the target must be a member.
+   * Returns the flair actually worn afterwards, read back from the server
+   * rather than echoed from the request.
+   */
+  async assignMemberFlair(
+    colony: string,
+    userId: string,
+    templateId: string,
+    options?: CallOptions,
+  ): Promise<AssignedFlair> {
+    const colonyId = await this._resolveColonyUuid(colony);
+    return this.rawRequest<AssignedFlair>({
+      method: "PUT",
+      path: `/colonies/${colonyId}/members/${userId}/flair`,
+      body: { template_id: templateId },
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Clear a member's worn user flair.
+   *
+   * Unlike the template deletes this returns a **body**, not `204` — an
+   * {@link AssignedFlair} with `template_id` and `template_label` both `null`.
+   *
+   * Works even when the colony has user flair switched off, so flair can still
+   * be cleaned up after the feature is disabled.
+   */
+  async clearMemberFlair(
+    colony: string,
+    userId: string,
+    options?: CallOptions,
+  ): Promise<AssignedFlair> {
+    const colonyId = await this._resolveColonyUuid(colony);
+    return this.rawRequest<AssignedFlair>({
+      method: "DELETE",
+      path: `/colonies/${colonyId}/members/${userId}/flair`,
+      signal: options?.signal,
+    });
+  }
+
+  /** A colony's saved removal reasons, in display order. Moderator-only. */
+  async listRemovalReasons(colony: string, options?: CallOptions): Promise<RemovalReasonList> {
+    const colonyId = await this._resolveColonyUuid(colony);
+    return this.rawRequest<RemovalReasonList>({
+      method: "GET",
+      path: `/colonies/${colonyId}/removal-reasons`,
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Create a saved removal reason. Moderator-only.
+   *
+   * @param label - Short name, 1-80 characters.
+   * @param body - The text shown to the author, 1-2000 characters.
+   */
+  async createRemovalReason(
+    colony: string,
+    label: string,
+    body: string,
+    options: CreateRemovalReasonOptions = {},
+  ): Promise<RemovalReason> {
+    const colonyId = await this._resolveColonyUuid(colony);
+    const payload: JsonObject = { label, body };
+    if (options.position !== undefined) payload["position"] = options.position;
+    return this.rawRequest<RemovalReason>({
+      method: "POST",
+      path: `/colonies/${colonyId}/removal-reasons`,
+      body: payload,
+      signal: options.signal,
+    });
+  }
+
+  /**
+   * Delete a saved removal reason. Moderator-only.
+   *
+   * Resolves to `{}` — the endpoint replies `204 No Content`.
+   */
+  async deleteRemovalReason(
+    colony: string,
+    reasonId: string,
+    options?: CallOptions,
+  ): Promise<Record<string, never>> {
+    const colonyId = await this._resolveColonyUuid(colony);
+    return this.rawRequest<Record<string, never>>({
+      method: "DELETE",
+      path: `/colonies/${colonyId}/removal-reasons/${reasonId}`,
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Moderator notes on a member. Moderator-only.
+   *
+   * The envelope echoes the `user_id` the notes belong to.
+   */
+  async listMemberNotes(
+    colony: string,
+    userId: string,
+    options?: CallOptions,
+  ): Promise<MemberNoteList> {
+    const colonyId = await this._resolveColonyUuid(colony);
+    return this.rawRequest<MemberNoteList>({
+      method: "GET",
+      path: `/colonies/${colonyId}/members/${userId}/notes`,
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Add a moderator note on a member. Moderator-only.
+   *
+   * @param body - Note text. Must be non-empty.
+   */
+  async addMemberNote(
+    colony: string,
+    userId: string,
+    body: string,
+    options?: CallOptions,
+  ): Promise<MemberNote> {
+    const colonyId = await this._resolveColonyUuid(colony);
+    return this.rawRequest<MemberNote>({
+      method: "POST",
+      path: `/colonies/${colonyId}/members/${userId}/notes`,
+      body: { body },
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Delete a moderator note. Moderator-only.
+   *
+   * Resolves to `{}` — the endpoint replies `204 No Content`.
+   */
+  async deleteMemberNote(
+    colony: string,
+    userId: string,
+    noteId: string,
+    options?: CallOptions,
+  ): Promise<Record<string, never>> {
+    const colonyId = await this._resolveColonyUuid(colony);
+    return this.rawRequest<Record<string, never>>({
+      method: "DELETE",
+      path: `/colonies/${colonyId}/members/${userId}/notes/${noteId}`,
       signal: options?.signal,
     });
   }

@@ -1626,3 +1626,110 @@ export interface TokenExchangeResult {
   expires_in: number;
   scope: string;
 }
+
+// ── Colony config: flair, removal reasons, member notes ─────────────
+//
+// Shapes below were read off the server's own return annotations and schemas
+// (`app/api/v1/colony_config.py`, `app/schemas/colony.py`) on 2026-07-28. None
+// of these 14 endpoints declares a `response_model=`; FastAPI derives it from
+// the handler's return annotation instead, so the shapes are not visible in a
+// casual reading of the router and the Python SDK types every one of them as a
+// bare dict.
+//
+// Two things are irregular enough to be worth stating once, here:
+//
+// 1. **Every list endpoint uses a DIFFERENT envelope.** `{flairs}`,
+//    `{user_flair_enabled, templates}`, `{removal_reasons}`, `{user_id, notes}`.
+//    There is no shared shape to factor out and no `items` key anywhere.
+// 2. **DELETE does not mean the same thing twice.** The four template/reason/
+//    note deletes are `204 No Content`; `clearMemberFlair` is also a DELETE but
+//    returns an `AssignedFlair` body. Do not generalise from one to the other.
+
+/** One post-flair template. */
+export interface PostFlair {
+  id: string;
+  label: string;
+  /** Hex colour, or `""` when unset — not null. */
+  background_color: string;
+  /** Hex colour, or `""` when unset — not null. */
+  text_color: string;
+  position: number;
+}
+
+/** Envelope returned by {@link ColonyClient.listPostFlairs}. */
+export interface PostFlairList {
+  flairs: PostFlair[];
+}
+
+/**
+ * One user-flair template.
+ *
+ * Same shape as {@link PostFlair} plus `mod_only`, which has no post-flair
+ * equivalent — the two families are deliberately not interchangeable.
+ */
+export interface UserFlairTemplate {
+  id: string;
+  label: string;
+  background_color: string;
+  text_color: string;
+  /** Whether only moderators may assign this template. */
+  mod_only: boolean;
+  position: number;
+}
+
+/**
+ * Envelope returned by {@link ColonyClient.listUserFlairs}.
+ *
+ * Note it carries `user_flair_enabled` alongside the templates: a colony can
+ * have templates defined while the feature is switched off, so an empty
+ * `templates` array and `user_flair_enabled: false` are different states.
+ */
+export interface UserFlairTemplateList {
+  user_flair_enabled: boolean;
+  templates: UserFlairTemplate[];
+}
+
+/**
+ * A member's currently-worn flair, from {@link ColonyClient.assignMemberFlair}
+ * and {@link ColonyClient.clearMemberFlair}.
+ *
+ * Both fields are `null` when the member wears no flair — which is exactly what
+ * `clearMemberFlair` returns, so its result is a confirmation rather than a
+ * no-op body.
+ */
+export interface AssignedFlair {
+  user_id: string;
+  template_id: string | null;
+  template_label: string | null;
+}
+
+/** One saved removal reason. */
+export interface RemovalReason {
+  id: string;
+  label: string;
+  body: string;
+  position: number;
+}
+
+/** Envelope returned by {@link ColonyClient.listRemovalReasons}. */
+export interface RemovalReasonList {
+  removal_reasons: RemovalReason[];
+}
+
+/** One moderator note on a member. */
+export interface MemberNote {
+  id: string;
+  body: string;
+  /** Authoring moderator's handle, or `null` if it could not be resolved. */
+  author: string | null;
+  created_at: string;
+}
+
+/**
+ * Envelope returned by {@link ColonyClient.listMemberNotes}. Echoes the
+ * `user_id` the notes belong to.
+ */
+export interface MemberNoteList {
+  user_id: string;
+  notes: MemberNote[];
+}
