@@ -50,13 +50,24 @@ to be linked to the GitHub repo. This is a manual browser step.
 ## Per-release checklist
 
 The release workflow refuses to publish if the tag version doesn't match
-`package.json`'s `version`, so the order matters.
+**all three** version sources, so the order matters.
 
 1. **Pick the version.** `0.x.y` for new features, `0.x.(y+1)` for fixes.
    Once we ship 1.0.0, semver applies normally.
-2. **Bump `version` in `package.json` and `jsr.json`** on a release branch
-   (`release-X.Y.Z`). Both must match — npm reads `package.json`, JSR reads
-   `jsr.json`.
+2. **Bump `version` in `package.json` and `jsr.json`, and the `VERSION`
+   constant in `src/index.ts`** on a release branch (`release-X.Y.Z`). All
+   three must match — npm reads `package.json`, JSR reads `jsr.json`, and
+   callers read `VERSION` at runtime.
+
+   > This step used to name only the first two, and `jsr.json` and `VERSION`
+   > were both left at 0.15.0 through the 0.16.0 and 0.17.0 releases. Because
+   > `jsr publish` treats an already-published version as a success, both
+   > releases went green while JSR published nothing — 0.16.0 and 0.17.0 are
+   > permanently absent there. `verify-tag` now checks all three, and
+   > `publish-jsr` asks the registry what it actually serves afterwards, so
+   > neither failure can recur silently. `tests/version-consistency.test.ts`
+   > catches the same drift at PR time.
+
 3. **Promote the `## Unreleased` section in `CHANGELOG.md`** to
    `## X.Y.Z — YYYY-MM-DD`. Add a fresh empty `## Unreleased` if you want
    one.
@@ -89,16 +100,25 @@ The release workflow refuses to publish if the tag version doesn't match
    git tag -a vX.Y.Z -m "Release X.Y.Z"
    git push origin vX.Y.Z
    ```
-8. **Watch the release workflow.** It runs four jobs sequentially:
-   `verify-tag` → `test (20, 22)` → `publish` → `github-release`. The
-   `publish` job is the one that requires `id-token: write`. If npm rejects
-   the OIDC token, double-check that the Trusted Publisher on npmjs.com
-   matches the workflow filename (`release.yml`) exactly.
-9. **Verify after the workflow finishes:**
-   - <https://www.npmjs.com/package/@thecolony/sdk> shows the new version.
-   - The package page shows a "Provenance" badge linking back to the workflow run.
-   - <https://github.com/TheColonyAI/colony-sdk-js/releases> has the new release.
+8. **Watch the release workflow.** It runs `verify-tag` → `test (20, 22)` →
+   `publish` (npm) and `publish-jsr` in parallel → `github-release`. Both
+   publish jobs require `id-token: write`. If npm rejects the OIDC token,
+   double-check that the Trusted Publisher on npmjs.com matches the workflow
+   filename (`release.yml`) exactly.
+9. **Verify after the workflow finishes.** Ask each registry what it serves —
+   a green workflow is not the same claim, which is exactly how two releases
+   missed JSR:
    - `npm view @thecolony/sdk version` from a clean shell prints the new version.
+   - `curl -s https://jsr.io/@thecolony/sdk/meta.json | jq .latest` prints it too.
+     (`publish-jsr` now asserts this itself, so a green run is evidence here —
+     but it costs nothing to look.)
+   - <https://www.npmjs.com/package/@thecolony/sdk> shows a "Provenance" badge
+     linking back to the workflow run.
+   - <https://github.com/TheColonyAI/colony-sdk-js/releases> has the new release.
+
+   The soundest check is to actually install it: `npm install @thecolony/sdk@X.Y.Z`
+   in an empty directory and require it. A registry page can be stale or cached;
+   a successful install cannot.
 
 ## Recovering from a bad release
 

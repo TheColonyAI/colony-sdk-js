@@ -27,22 +27,49 @@ permissions:
 
 jobs:
   verify-tag:
-    name: Verify tag matches package.json version
+    name: Verify tag matches every version source
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.check.outputs.version }}
     steps:
       - uses: actions/checkout@v7
       - id: check
+        # The version lives in THREE places and this step used to check one.
+        # jsr.json and the exported VERSION constant both sat at 0.15.0 through
+        # the 0.16.0 and 0.17.0 releases; because only package.json was checked,
+        # both releases went green while JSR published nothing (see publish-jsr
+        # below). Check all three, and report every mismatch rather than the
+        # first — a release cut with two stale files should say so once.
         run: |
+          set -euo pipefail
           TAG_VERSION="${GITHUB_REF#refs/tags/v}"
           PKG_VERSION=$(node -p "require('./package.json').version")
-          echo "Tag version:        $TAG_VERSION"
-          echo "package.json version: $PKG_VERSION"
-          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
-            echo "::error::Tag v$TAG_VERSION does not match package.json version $PKG_VERSION"
-            exit 1
-          fi
+          JSR_VERSION=$(node -p "require('./jsr.json').version")
+          LOCK_VERSION=$(node -p "require('./package-lock.json').version")
+          SRC_VERSION=$(node -p "
+            const m = require('fs').readFileSync('src/index.ts', 'utf8')
+              .match(/export const VERSION = \"([^\"]+)\"/);
+            m ? m[1] : 'NOT-FOUND';
+          ")
+
+          echo "tag                $TAG_VERSION"
+          echo "package.json       $PKG_VERSION"
+          echo "jsr.json           $JSR_VERSION"
+          echo "package-lock.json  $LOCK_VERSION"
+          echo "src/index.ts       $SRC_VERSION"
+
+          FAILED=0
+          for pair in "package.json:$PKG_VERSION" "jsr.json:$JSR_VERSION" \
+                      "package-lock.json:$LOCK_VERSION" "src/index.ts:$SRC_VERSION"; do
+            name="${pair%%:*}"
+            value="${pair#*:}"
+            if [ "$TAG_VERSION" != "$value" ]; then
+              echo "::error::$name says $value but the tag says $TAG_VERSION"
+              FAILED=1
+            fi
+          done
+          [ "$FAILED" -eq 0 ] || exit 1
+
           echo "version=$TAG_VERSION" >> "$GITHUB_OUTPUT"
 
   test:
@@ -98,6 +125,35 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - run: npx jsr publish
+      # `jsr publish` exits 0 when the version already exists — it prints
+      # "Warning: Skipping, already published" and succeeds. That is how
+      # 0.16.0 and 0.17.0 shipped to npm with a fully green release while JSR
+      # stayed on 0.15.0: nothing in the pipeline distinguished "published" from
+      # "declined to publish". Both versions are permanently absent from JSR.
+      #
+      # verify-tag now catches the stale-jsr.json cause, but a step whose
+      # success is unconditional is worth closing on its own — the next cause
+      # need not be a version mismatch. Ask the registry what it actually
+      # serves, which is the only answer that cannot be vacuous.
+      - name: Verify JSR actually serves this version
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.verify-tag.outputs.version }}"
+          # The registry is read-after-write; give it a moment to be consistent.
+          for attempt in 1 2 3 4 5; do
+            LATEST=$(curl -fsSL https://jsr.io/@thecolony/sdk/meta.json \
+              | node -p "JSON.parse(require('fs').readFileSync(0,'utf8')).latest ?? ''")
+            echo "attempt $attempt: jsr latest = ${LATEST:-<none>}"
+            if [ "$LATEST" = "$VERSION" ]; then
+              echo "JSR serves $VERSION"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::JSR still reports latest=${LATEST:-<none>}, expected $VERSION. \
+          The publish step passed without publishing — check for a \
+          'Skipping, already published' warning above."
+          exit 1
 
   github-release:
     name: Create GitHub Release
