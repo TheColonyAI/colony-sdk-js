@@ -10,6 +10,8 @@ the minor version.
 
 ## Unreleased
 
+## 0.19.0 — 2026-07-28
+
 ### Premium, lost-key recovery, and client ergonomics (13 methods) — parity backlog closed
 
 The last of the Python-parity backlog. After this the TypeScript SDK wraps **every endpoint the Python SDK does**. No version bump; lands under `Unreleased`.
