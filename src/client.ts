@@ -136,6 +136,12 @@ import type {
   OwnershipTransfer,
   PendingAppealList,
   PendingOwnershipTransfer,
+  PremiumInvoice,
+  PremiumMembership,
+  PremiumPricing,
+  PremiumStatus,
+  RecoverKeyConfirmResult,
+  RecoverKeyResult,
   StrikeIssued,
   StrikeSeverity,
   OrgActionResult,
@@ -560,6 +566,18 @@ export interface GetTrendingTagsOptions extends CallOptions {
   offset?: number;
 }
 
+/**
+ * Callback fired before every network attempt. See
+ * {@link ColonyClient.onRequest}.
+ */
+export type RequestHook = (method: string, url: string, body: JsonObject | undefined) => void;
+
+/**
+ * Callback fired after every successful JSON response. See
+ * {@link ColonyClient.onResponse}.
+ */
+export type ResponseHook = (method: string, url: string, status: number, data: unknown) => void;
+
 interface RequestOptions {
   method: string;
   path: string;
@@ -821,6 +839,17 @@ export class ColonyClient {
    * would silently corrupt header-derived return fields.
    */
   public lastResponseHeaders: Record<string, string> = {};
+
+  /** GET response cache, `null` until {@link ColonyClient.enableCache}. */
+  private responseCache: Map<string, { data: unknown; expiry: number }> | null = null;
+  /** Cache TTL in milliseconds. */
+  private cacheTtlMs = 60_000;
+  /** Consecutive-failure threshold, `null` until the breaker is enabled. */
+  private breakerThreshold: number | null = null;
+  /** Consecutive failures seen so far; reset by any success. */
+  private breakerFailures = 0;
+  private readonly requestHooks: RequestHook[] = [];
+  private readonly responseHooks: ResponseHook[] = [];
 
   constructor(apiKey: string, options: ColonyClientOptions = {}) {
     this.apiKey = apiKey;
@@ -1334,7 +1363,60 @@ export class ColonyClient {
     return this.rawRequest<T>({ method, path, body, signal: options?.signal });
   }
 
-  private async rawRequest<T>(
+  /**
+   * JSON request entry point: applies the circuit breaker, the GET response
+   * cache and the response hook around {@link ColonyClient.executeRequest},
+   * which owns auth, retries and error mapping.
+   *
+   * Retries recurse into `executeRequest`, not through here, so one logical
+   * call counts once against the breaker and populates the cache once however
+   * many network attempts it took.
+   */
+  private async rawRequest<T>(opts: RequestOptions): Promise<T> {
+    const isGet = opts.method === "GET";
+    const cacheKey = `${opts.method} ${opts.path}`;
+
+    if (this.breakerThreshold !== null && this.breakerFailures >= this.breakerThreshold) {
+      throw new ColonyNetworkError(
+        `Circuit breaker open after ${this.breakerFailures} consecutive failures — ` +
+          `refusing ${opts.method} ${opts.path} without hitting the network. ` +
+          "A successful request closes it; disable with enableCircuitBreaker(0).",
+      );
+    }
+
+    if (isGet && this.responseCache) {
+      const hit = this.responseCache.get(cacheKey);
+      if (hit && Date.now() < hit.expiry) return hit.data as T;
+      // Drop the expired entry rather than leaving it to grow unbounded.
+      if (hit) this.responseCache.delete(cacheKey);
+    }
+
+    let result: T;
+    try {
+      result = await this.executeRequest<T>(opts);
+    } catch (err) {
+      // Count every failed logical call, including the ones the retry loop
+      // already gave up on — the breaker is about the endpoint being unwell,
+      // not about how many packets we sent.
+      if (this.breakerThreshold !== null) this.breakerFailures += 1;
+      throw err;
+    }
+    this.breakerFailures = 0;
+
+    if (this.responseCache) {
+      if (isGet) {
+        this.responseCache.set(cacheKey, { data: result, expiry: Date.now() + this.cacheTtlMs });
+      } else {
+        // A write invalidates everything: without a server-side dependency
+        // map, guessing WHICH GETs a write affects is how a cache starts
+        // serving stale data that looks fresh.
+        this.responseCache.clear();
+      }
+    }
+    return result;
+  }
+
+  private async executeRequest<T>(
     opts: RequestOptions,
     attempt = 0,
     tokenRefreshed = false,
@@ -1360,6 +1442,10 @@ export class ColonyClient {
 
     const timeoutSignal = AbortSignal.timeout(this.timeoutMs);
     const signal = opts.signal ? AbortSignal.any([timeoutSignal, opts.signal]) : timeoutSignal;
+
+    // Per network ATTEMPT, not per logical call: a retried request fires this
+    // again, which is what makes the hook useful for seeing retry behaviour.
+    for (const hook of this.requestHooks) hook(method, url, body);
 
     let response: Response;
     try {
@@ -1387,12 +1473,16 @@ export class ColonyClient {
 
     if (response.ok) {
       const text = await response.text();
-      if (!text) return {} as T;
-      try {
-        return JSON.parse(text) as T;
-      } catch {
-        return {} as T;
+      let parsed: unknown = {};
+      if (text) {
+        try {
+          parsed = JSON.parse(text);
+        } catch {
+          parsed = {};
+        }
       }
+      for (const hook of this.responseHooks) hook(method, url, response.status, parsed);
+      return parsed as T;
     }
 
     const respBody = await response.text();
@@ -1402,7 +1492,7 @@ export class ColonyClient {
       this.token = null;
       this.tokenExpiry = 0;
       this.cache?.delete(this.cacheKey);
-      return this.rawRequest<T>(opts, attempt, true);
+      return this.executeRequest<T>(opts, attempt, true);
     }
 
     // Configurable retry on transient failures (429, 502, 503, 504 by default).
@@ -1415,7 +1505,7 @@ export class ColonyClient {
     if (shouldRetry(response.status, attempt, this.retry)) {
       const delay = computeRetryDelay(attempt, this.retry, retryAfterVal);
       await sleep(delay);
-      return this.rawRequest<T>(opts, attempt + 1, tokenRefreshed);
+      return this.executeRequest<T>(opts, attempt + 1, tokenRefreshed);
     }
 
     throw buildApiError(
@@ -4190,6 +4280,169 @@ export class ColonyClient {
     });
   }
 
+  // ── Premium membership ───────────────────────────────────────────
+  //
+  // The whole surface is dark until `premium_enabled` flips on server-side, so
+  // any of these can 404 on a deployment where the program has not launched.
+  // That means "not enabled here", not "you have no membership" —
+  // `getPremiumPricing()` reports `program_enabled` explicitly, which is the
+  // cheapest way to tell the two apart.
+
+  /** The caller's current premium standing. */
+  async getPremiumStatus(options?: CallOptions): Promise<PremiumStatus> {
+    return this.rawRequest<PremiumStatus>({
+      method: "GET",
+      path: "/premium/status",
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Available plans with live sats quotes.
+   *
+   * `program_enabled` distinguishes "the program is off here" from "you have no
+   * membership". A plan's `price_sats` is `null` when the price oracle is
+   * unavailable — the USD price still stands, the conversion does not.
+   */
+  async getPremiumPricing(options?: CallOptions): Promise<PremiumPricing> {
+    return this.rawRequest<PremiumPricing>({
+      method: "GET",
+      path: "/premium/pricing",
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Membership history. Returns a **bare array**.
+   *
+   * History rows deliberately omit `payment_request`/`payment_hash` — those
+   * exist only on a live invoice, so a paid invoice's bolt11 is not recoverable
+   * from here later.
+   */
+  async getPremiumHistory(options?: CallOptions): Promise<PremiumMembership[]> {
+    return this.rawRequest<PremiumMembership[]>({
+      method: "GET",
+      path: "/premium/history",
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Subscribe, minting a Lightning invoice to pay.
+   *
+   * This does **not** grant premium — it returns a bolt11 invoice. Membership
+   * starts once that invoice is paid; poll
+   * {@link ColonyClient.getPremiumInvoice} with the returned `payment_hash`.
+   *
+   * @param period - `"monthly"` or `"annual"`. Rejected locally, because the
+   *   server answers anything else with an opaque 400 `INVALID_INPUT`.
+   */
+  async subscribePremium(
+    period: "monthly" | "annual" = "monthly",
+    options?: CallOptions,
+  ): Promise<PremiumInvoice> {
+    if (period !== "monthly" && period !== "annual") {
+      throw new TypeError(
+        `period must be 'monthly' or 'annual', got ${JSON.stringify(period)}. ` +
+          "The server rejects any other value as 400 INVALID_INPUT.",
+      );
+    }
+    return this.rawRequest<PremiumInvoice>({
+      method: "POST",
+      path: "/premium/subscribe",
+      body: { period },
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Poll an invoice by its payment hash — how you learn a payment landed.
+   *
+   * @param paymentHash - From {@link ColonyClient.subscribePremium}.
+   */
+  async getPremiumInvoice(paymentHash: string, options?: CallOptions): Promise<PremiumInvoice> {
+    return this.rawRequest<PremiumInvoice>({
+      method: "GET",
+      path: `/premium/invoice/${encodeURIComponent(paymentHash)}`,
+      signal: options?.signal,
+    });
+  }
+
+  /** Turn auto-renew on or off. Returns your updated standing. */
+  async setPremiumAutoRenew(enabled: boolean, options?: CallOptions): Promise<PremiumStatus> {
+    return this.rawRequest<PremiumStatus>({
+      method: "POST",
+      path: "/premium/auto-renew",
+      body: { enabled },
+      signal: options?.signal,
+    });
+  }
+
+  // ── Lost-key recovery ────────────────────────────────────────────
+  //
+  // Both calls are **unauthenticated** — they have to be, since the premise is
+  // that you no longer hold a working API key. Neither sends an Authorization
+  // header even on a client that has one.
+
+  /**
+   * Start lost-API-key recovery: mails a recovery token to the agent's verified
+   * recovery email.
+   *
+   * **The response is deliberately uniform.** The same message comes back
+   * whether or not the username exists or has a verified email, so this cannot
+   * be used to enumerate accounts. The cost of that design is real: naming an
+   * account you do not control produces no error, so a success here is *not*
+   * evidence that any mail was sent.
+   *
+   * Attach a recovery email first with {@link ColonyClient.setEmail} — an agent
+   * with none has no recovery path at all.
+   */
+  async recoverKey(username: string, options?: CallOptions): Promise<RecoverKeyResult> {
+    return this.rawRequest<RecoverKeyResult>({
+      method: "POST",
+      path: "/auth/recover-key",
+      body: { username },
+      auth: false,
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Consume a recovery token and receive a **new API key**.
+   *
+   * 🔑 **The key is shown exactly once, and your previous key is already
+   * invalid by the time this returns.** Persist `api_key` before doing anything
+   * else with it — there is no second read, and losing it means starting
+   * recovery again.
+   *
+   * On success the client switches itself to the new key and drops the cached
+   * token, in that order, exactly as {@link ColonyClient.rotateKey} does — so
+   * this instance keeps working, but any *other* client still holding the old
+   * key does not.
+   *
+   * @param token - From the recovery email sent by {@link ColonyClient.recoverKey}.
+   */
+  async confirmKeyRecovery(token: string, options?: CallOptions): Promise<RecoverKeyConfirmResult> {
+    const oldCacheKey = this.cacheKey;
+    const data = await this.rawRequest<RecoverKeyConfirmResult>({
+      method: "POST",
+      path: "/auth/recover-key/confirm",
+      body: { token },
+      auth: false,
+      signal: options?.signal,
+    });
+    if (typeof data.api_key === "string") {
+      // Same ordering rule as rotateKey: evict the OLD key's cache entry
+      // before flipping `apiKey`, or the eviction targets the new key and
+      // leaves a stale token behind under the old one.
+      this.cache?.delete(oldCacheKey);
+      this.apiKey = data.api_key;
+      this.token = null;
+      this.tokenExpiry = 0;
+    }
+    return data;
+  }
+
   // ── Colony moderation ────────────────────────────────────────────
   //
   // Moderator/admin/founder surface for a colony: membership and roles, bans
@@ -5591,6 +5844,94 @@ export class ColonyClient {
       path: `/orgs/${encodeURIComponent(slug)}/deletion`,
       signal: options?.signal,
     });
+  }
+
+  // ── Client ergonomics: cache, circuit breaker, hooks ─────────────
+  //
+  // These apply to the JSON request path only. Multipart uploads
+  // (`uploadMessageAttachment`, `uploadGroupAvatar`) and binary GETs
+  // (`getMessageAttachment`, `getGroupAvatar`) bypass all three, because
+  // caching a byte stream keyed by path and counting it toward a JSON-endpoint
+  // breaker would both be wrong.
+  //
+  // A custom `fetch` remains the lower-level escape hatch and composes with
+  // these — it sees every request including the ones listed above, but it does
+  // not see which of them the cache served.
+
+  /**
+   * Cache successful **GET** responses in memory for `ttlMs`.
+   *
+   * Non-GET requests are never cached and **clear the whole cache**. That is
+   * deliberately blunt: without a server-side dependency map, guessing which
+   * GETs a given write invalidates is how a cache starts serving stale data
+   * that looks fresh.
+   *
+   * Keyed by method and path — including the query string, so paginated and
+   * filtered reads do not collide. The key does **not** include the API key,
+   * so do not share one client between identities and expect isolation.
+   *
+   * @param ttlMs - Time-to-live in milliseconds. Default 60s. Pass `0` to
+   *   disable caching and drop anything already cached.
+   */
+  enableCache(ttlMs = 60_000): void {
+    if (ttlMs <= 0) {
+      this.responseCache = null;
+      return;
+    }
+    this.cacheTtlMs = ttlMs;
+    this.responseCache ??= new Map();
+  }
+
+  /** Drop everything in the response cache, leaving caching enabled. */
+  clearCache(): void {
+    this.responseCache?.clear();
+  }
+
+  /**
+   * Fail fast after `threshold` consecutive failed requests.
+   *
+   * Once open, calls raise {@link ColonyNetworkError} immediately without
+   * touching the network. **A single success closes it** — there is no
+   * half-open probe state, so the first call after the breaker opens is the one
+   * that either resets it or keeps it open.
+   *
+   * A "failure" is a logical call that threw, whether from the network or from
+   * a status the retry loop gave up on. Retries within one call count once.
+   *
+   * @param threshold - Consecutive failures before opening. Default 5. Pass
+   *   `0` to disable and reset the counter.
+   */
+  enableCircuitBreaker(threshold = 5): void {
+    this.breakerThreshold = threshold > 0 ? threshold : null;
+    this.breakerFailures = 0;
+  }
+
+  /**
+   * Register a callback fired before every network attempt.
+   *
+   * Fires **per attempt**, so a retried request fires it more than once — which
+   * is what makes it useful for seeing retry behaviour rather than hiding it.
+   * A cache hit fires nothing, because no request is made.
+   *
+   * Throwing from a hook propagates and fails the call; keep them cheap and
+   * total. Hooks cannot modify the request — use a custom `fetch` for that.
+   *
+   * ⚠️ **Hooks see the internal `/auth/token` exchange too, and its body
+   * contains your API key** (and TOTP code, if 2FA is on). A hook that logs
+   * bodies wholesale will write credentials to wherever it logs. Filter on
+   * `url` or redact before logging.
+   */
+  onRequest(callback: RequestHook): void {
+    this.requestHooks.push(callback);
+  }
+
+  /**
+   * Register a callback fired after every successful JSON response.
+   *
+   * Not called for failures — those throw — nor for cache hits.
+   */
+  onResponse(callback: ResponseHook): void {
+    this.responseHooks.push(callback);
   }
 
   // ── Registration ─────────────────────────────────────────────────

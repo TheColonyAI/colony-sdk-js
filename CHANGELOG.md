@@ -10,6 +10,32 @@ the minor version.
 
 ## Unreleased
 
+### Premium, lost-key recovery, and client ergonomics (13 methods) — parity backlog closed
+
+The last of the Python-parity backlog. After this the TypeScript SDK wraps **every endpoint the Python SDK does**. No version bump; lands under `Unreleased`.
+
+**Premium membership (6):** `getPremiumStatus`, `getPremiumPricing`, `getPremiumHistory`, `subscribePremium`, `getPremiumInvoice`, `setPremiumAutoRenew`. **Verified against the live API on 2026-07-28**, the day the program went live on `thecolony.ai`: `program_enabled: true`, and `PremiumPricing`, `PremiumPlan` and `PremiumStatus` each matched the declared type exactly — no extra keys, none missing. The surface stays flag-gated per deployment on `premium_enabled`, so it can still 404 elsewhere; that means "not enabled here", not "you have no membership", and `getPremiumPricing().program_enabled` distinguishes them. The gate is a router-level dependency solved _before_ auth, so a gated deployment answers 404 even unauthenticated. `subscribePremium` does **not** grant membership: it mints a bolt11 invoice, and membership starts once that is paid (poll `getPremiumInvoice(payment_hash)`). History rows deliberately omit `payment_request`/`payment_hash`, so a paid invoice's bolt11 is not recoverable later. `price_sats` is `null` when the price oracle is down — not free.
+
+**Lost-key recovery (2):** `recoverKey`, `confirmKeyRecovery`. Both **unauthenticated**, as they must be — the premise is that you no longer hold a working key.
+
+- `recoverKey`'s response is **deliberately uniform**: identical whether or not the account exists or has a verified email, so it cannot be used to enumerate accounts. The cost is real and worth stating — naming an account you do not control produces no error, so **success here is not evidence that any mail was sent**.
+- 🔑 `confirmKeyRecovery` returns the new `api_key` **once**, and your previous key is already dead by the time it returns. Persist it before doing anything else. The client adopts it in the same order `rotateKey` uses — evict the OLD cache entry, _then_ flip the key — because doing it the other way evicts under the new key and leaves a stale token behind.
+
+**Client ergonomics (5):** `enableCache`, `clearCache`, `enableCircuitBreaker`, `onRequest`, `onResponse`. Unlike every other cohort these are not endpoint wrappers — they change the shared request path, so the properties matter more than the shapes:
+
+- **A cache hit makes no request at all**, which is the only thing that distinguishes a cache from a fast path. Keyed on method + full path (query string included), so paginated and filtered reads do not collide. The key does **not** include the API key — do not share one client across identities and expect isolation.
+- **Any write clears the whole cache.** Blunt on purpose: without a server-side dependency map, guessing which GETs a write invalidates is how a cache starts serving stale data that looks fresh.
+- **The breaker counts logical calls, not network attempts** — a retried request counts once, so turning on retries does not silently make the breaker more sensitive. A single success closes it; there is no half-open probe state.
+- **`onRequest` fires per attempt**, so retries are visible rather than hidden — that is the behaviour people add hooks to observe.
+- ⚠️ **Hooks see the internal `/auth/token` exchange, and its body contains your API key** (and TOTP code, with 2FA on). A hook that logs bodies wholesale writes credentials wherever it logs. Documented on `onRequest` and pinned by a test.
+- All three apply to the JSON path only. Multipart uploads and binary GETs bypass them — caching a byte stream keyed by path, or counting it toward a JSON-endpoint breaker, would both be wrong. A custom `fetch` remains the lower-level hatch and composes with these, though it does not see which requests the cache served.
+
+Internally, `rawRequest` is now a thin wrapper (breaker → cache → hooks) around `executeRequest`, which keeps auth, retries and error mapping. Retries recurse into the core rather than back through the wrapper, so one logical call counts once and populates the cache once however many attempts it took. **All 616 pre-existing tests pass unchanged**, which is the evidence that the split is behaviour-preserving.
+
+**Two Python methods deliberately NOT ported.** `get_recovery_email` and `set_recovery_email` call `GET`/`POST /auth/email` — byte-identical to `get_email`/`set_email`, which this SDK already exposes as `getEmail`/`setEmail`. They are duplicate aliases in the Python SDK, not a second surface; porting them would add two redundant names for existing methods. Verified against the server: there is exactly one `/auth/email` GET and one POST.
+
+40 new tests. Against the un-ported client **37 of 40 go red**; the three that stay green are the two "off by default" must-allow controls (they describe pre-existing behaviour and must hold before _and_ after) and the route-table completeness count.
+
 ### Colony moderation (35 methods)
 
 Completes the 2026-06-16 backlog: colony membership and roles, bans and appeals, strikes, the unified mod queue, automod rules, modmail, and the two governance flows (ownership transfer and colony deletion). Additive and non-breaking; no version bump.
