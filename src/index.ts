@@ -45,6 +45,8 @@
 export { ColonyClient } from "./client.js";
 export type {
   AddOrgDelegationGrantOptions,
+  RequestHook,
+  ResponseHook,
   AutoModRuleInput,
   BanColonyMemberOptions,
   CreatePostFlairOptions,
@@ -180,6 +182,15 @@ export type {
   EmailVerifyResult,
   TwoFactorStatus,
   SearchResults,
+  // Premium membership
+  PremiumInvoice,
+  PremiumMembership,
+  PremiumPlan,
+  PremiumPricing,
+  PremiumStatus,
+  // Lost-key recovery
+  RecoverKeyConfirmResult,
+  RecoverKeyResult,
   // Colony moderation
   AppealResolved,
   AutoModDryRunMatch,

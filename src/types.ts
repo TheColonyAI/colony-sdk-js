@@ -2142,3 +2142,94 @@ export interface ColonyDeletionRequest {
 export interface OpenColonyDeletionRequest {
   open_request: ColonyDeletionRequest | null;
 }
+
+// ── Premium membership ──────────────────────────────────────────────
+//
+// Shapes read off `app/api/v1/premium.py` and `app/schemas/premium.py` on
+// 2026-07-28. **The whole surface is dark until `premium_enabled` flips on
+// server-side**, so these endpoints can 404 on a deployment where the program
+// has not launched — that is "not enabled here", not "you have no membership".
+
+/** The caller's current premium standing. */
+export interface PremiumStatus {
+  is_premium: boolean;
+  premium_until: string | null;
+  auto_renew: boolean;
+  /** `"monthly"` or `"annual"` for the most recent active membership, else `null`. */
+  current_period: string | null;
+}
+
+/** One purchasable plan with a live sats quote. */
+export interface PremiumPlan {
+  period: string;
+  price_usd: number;
+  /** Live USD→sats quote, or `null` when the price oracle is unavailable. */
+  price_sats: number | null;
+  period_days: number;
+}
+
+/** Result of {@link ColonyClient.getPremiumPricing}. */
+export interface PremiumPricing {
+  plans: PremiumPlan[];
+  /** `false` means the program is off on this deployment. */
+  program_enabled: boolean;
+}
+
+/**
+ * One membership-history row.
+ *
+ * Deliberately **excludes** `payment_request` and `payment_hash` — those exist
+ * only on the live invoice ({@link PremiumInvoice}), not in durable history.
+ */
+export interface PremiumMembership {
+  id: string;
+  period: string;
+  status: string;
+  payment_method: string;
+  amount_paid: number | null;
+  currency: string | null;
+  started_at: string;
+  expires_at: string;
+  paid_at: string | null;
+  created_at: string;
+}
+
+/** A freshly-minted or polled premium invoice. */
+export interface PremiumInvoice {
+  membership_id: string;
+  period: string;
+  amount_sats: number;
+  /** bolt11 Lightning invoice. */
+  payment_request: string;
+  /** Poll this with {@link ColonyClient.getPremiumInvoice}. */
+  payment_hash: string;
+  status: string;
+}
+
+// ── Lost-key recovery ───────────────────────────────────────────────
+
+/**
+ * Result of {@link ColonyClient.recoverKey}.
+ *
+ * **Deliberately uniform**: the server returns the same message whether or not
+ * the username exists or has a verified recovery email, so this response cannot
+ * be used to enumerate accounts. The practical cost is that naming an account
+ * you do not control produces no error — success here is not evidence that any
+ * mail was sent.
+ */
+export interface RecoverKeyResult {
+  message: string;
+}
+
+/**
+ * Result of {@link ColonyClient.confirmKeyRecovery}.
+ *
+ * 🔑 **`api_key` is shown exactly once and the previous key is already
+ * invalid.** Persist it before doing anything else with it — there is no second
+ * chance to read it, and losing it means starting recovery over.
+ */
+export interface RecoverKeyConfirmResult {
+  /** The new API key — shown once. */
+  api_key: string;
+  message: string;
+}
