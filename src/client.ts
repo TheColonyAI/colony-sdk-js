@@ -4081,11 +4081,7 @@ export class ColonyClient {
    * @param name - Display name, 1-100 characters.
    * @param slug - Global handle, 3-50 characters, lowercase letters/numbers/hyphens.
    */
-  async createOrg(
-    name: string,
-    slug: string,
-    options: CreateOrgOptions = {},
-  ): Promise<OrgCreated> {
+  async createOrg(name: string, slug: string, options: CreateOrgOptions = {}): Promise<OrgCreated> {
     const body: JsonObject = { name, slug };
     if (options.description !== undefined) body["description"] = options.description;
     return this.rawRequest<OrgCreated>({
@@ -4141,10 +4137,7 @@ export class ColonyClient {
   }
 
   /** Accept an org invitation. Returns your new membership. */
-  async acceptOrgInvitation(
-    invitationId: string,
-    options?: CallOptions,
-  ): Promise<OrgMembership> {
+  async acceptOrgInvitation(invitationId: string, options?: CallOptions): Promise<OrgMembership> {
     return this.rawRequest<OrgMembership>({
       method: "POST",
       path: `/orgs/invitations/${invitationId}/accept`,
@@ -4321,9 +4314,7 @@ export class ColonyClient {
    * A transparency read-back over every org you belong to — the observed
    * counterpart to {@link ColonyClient.setOrgVisibility}'s intent.
    */
-  async listOrgDisclosureRecipients(
-    options?: CallOptions,
-  ): Promise<OrgDisclosureRecipient[]> {
+  async listOrgDisclosureRecipients(options?: CallOptions): Promise<OrgDisclosureRecipient[]> {
     return this.rawRequest<OrgDisclosureRecipient[]>({
       method: "GET",
       path: "/orgs/disclosure-recipients",
@@ -4514,10 +4505,7 @@ export class ColonyClient {
    * A discriminated union — narrow on `scheduled` before reading
    * `execute_after`, which is absent when nothing is scheduled.
    */
-  async getOrgDeletionStatus(
-    slug: string,
-    options?: CallOptions,
-  ): Promise<OrgDeletionStatus> {
+  async getOrgDeletionStatus(slug: string, options?: CallOptions): Promise<OrgDeletionStatus> {
     return this.rawRequest<OrgDeletionStatus>({
       method: "GET",
       path: `/orgs/${encodeURIComponent(slug)}/deletion`,

@@ -73,9 +73,7 @@ describe("transport", () => {
     expect(call?.headers["content-type"]).toBe("application/x-www-form-urlencoded");
     const form = new URLSearchParams(call?.body ?? "");
     expect(form.get("grant_type")).toBe("urn:ietf:params:oauth:grant-type:token-exchange");
-    expect(form.get("subject_token_type")).toBe(
-      "urn:ietf:params:oauth:token-type:access_token",
-    );
+    expect(form.get("subject_token_type")).toBe("urn:ietf:params:oauth:token-type:access_token");
     expect(form.get("audience")).toBe("acme-rp");
     // The default subject is the client's own JWT, not the API key.
     expect(form.get("subject_token")).toBe("test-token-abc");
@@ -138,9 +136,9 @@ describe("subjectToken validation", () => {
 
   it("rejects an empty subjectToken", async () => {
     const mock = new MockFetch();
-    await expect(
-      makeClient(mock).exchangeToken("acme-rp", { subjectToken: "  " }),
-    ).rejects.toThrow(/empty/);
+    await expect(makeClient(mock).exchangeToken("acme-rp", { subjectToken: "  " })).rejects.toThrow(
+      /empty/,
+    );
     expect(mock.calls.length).toBe(0);
   });
 

@@ -1611,9 +1611,7 @@ export interface OrgDeletionCancelled {
  * A discriminated union: `execute_after` exists only when `scheduled` is
  * `true`, so narrowing on `scheduled` is required to read it.
  */
-export type OrgDeletionStatus =
-  | { scheduled: false }
-  | { scheduled: true; execute_after: string };
+export type OrgDeletionStatus = { scheduled: false } | { scheduled: true; execute_after: string };
 
 // ── Agent SSO (RFC 8693 token exchange) ─────────────────────────────
 

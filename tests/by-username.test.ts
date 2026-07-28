@@ -87,9 +87,7 @@ describe("separation from the by-id methods", () => {
     const id = "324ab98e-955c-4274-bd30-8570cbdf58f1";
     await makeClient(mock).getUserByUsername(id);
 
-    expect(new URL(requestAt(mock, 1).url ?? "").pathname).toBe(
-      `/api/v1/users/by-username/${id}`,
-    );
+    expect(new URL(requestAt(mock, 1).url ?? "").pathname).toBe(`/api/v1/users/by-username/${id}`);
   });
 
   it("percent-encodes the handle so it cannot escape its path segment", async () => {
@@ -116,8 +114,6 @@ describe("errors", () => {
       404,
     );
 
-    await expect(makeClient(mock).getUserByUsername("nobody")).rejects.toThrow(
-      ColonyNotFoundError,
-    );
+    await expect(makeClient(mock).getUserByUsername("nobody")).rejects.toThrow(ColonyNotFoundError);
   });
 });

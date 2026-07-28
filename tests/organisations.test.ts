@@ -73,12 +73,7 @@ describe("verb and path", () => {
       "POST",
       "/orgs/invitations/inv-1/decline",
     ],
-    [
-      "inviteOrgMember",
-      (c) => c.inviteOrgMember("acme", "bob"),
-      "POST",
-      "/orgs/acme/invitations",
-    ],
+    ["inviteOrgMember", (c) => c.inviteOrgMember("acme", "bob"), "POST", "/orgs/acme/invitations"],
     [
       "listOrgPendingInvitations",
       (c) => c.listOrgPendingInvitations("acme"),
@@ -116,12 +111,7 @@ describe("verb and path", () => {
       "PUT",
       "/orgs/acme/disclosure",
     ],
-    [
-      "setOrgVisibility",
-      (c) => c.setOrgVisibility("acme", true),
-      "PUT",
-      "/orgs/acme/visibility",
-    ],
+    ["setOrgVisibility", (c) => c.setOrgVisibility("acme", true), "PUT", "/orgs/acme/visibility"],
     [
       "listOrgDisclosureRecipients",
       (c) => c.listOrgDisclosureRecipients(),
@@ -174,12 +164,7 @@ describe("verb and path", () => {
     ],
     ["requestOrgDeletion", (c) => c.requestOrgDeletion("acme"), "POST", "/orgs/acme/deletion"],
     ["cancelOrgDeletion", (c) => c.cancelOrgDeletion("acme"), "DELETE", "/orgs/acme/deletion"],
-    [
-      "getOrgDeletionStatus",
-      (c) => c.getOrgDeletionStatus("acme"),
-      "GET",
-      "/orgs/acme/deletion",
-    ],
+    ["getOrgDeletionStatus", (c) => c.getOrgDeletionStatus("acme"), "GET", "/orgs/acme/deletion"],
   ];
 
   it("covers every ported org method", () => {
@@ -353,9 +338,7 @@ describe("measured response shapes", () => {
     const pending = await client.getOrgDeletionStatus("acme");
     // The union is what makes this read type-safe rather than an optional
     // field the caller can forget to check.
-    expect(pending.scheduled === true && pending.execute_after).toBe(
-      "2026-08-27T00:00:00+00:00",
-    );
+    expect(pending.scheduled === true && pending.execute_after).toBe("2026-08-27T00:00:00+00:00");
   });
 
   it("list endpoints return bare arrays, not an { items } envelope", async () => {
