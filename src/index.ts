@@ -45,6 +45,9 @@
 export { ColonyClient } from "./client.js";
 export type {
   AddOrgDelegationGrantOptions,
+  CreatePostFlairOptions,
+  CreateRemovalReasonOptions,
+  CreateUserFlairOptions,
   AddOrgResourceOptions,
   ConversationHistoryOptions,
   ConversationTailOptions,
@@ -167,6 +170,16 @@ export type {
   EmailVerifyResult,
   TwoFactorStatus,
   SearchResults,
+  // Colony config: flair, removal reasons, member notes
+  AssignedFlair,
+  MemberNote,
+  MemberNoteList,
+  PostFlair,
+  PostFlairList,
+  RemovalReason,
+  RemovalReasonList,
+  UserFlairTemplate,
+  UserFlairTemplateList,
   // Tag follows
   FollowedTag,
   TagFollowResult,
