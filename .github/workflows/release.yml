@@ -11,7 +11,9 @@
 #      from this exact commit.
 #   4. Publishes to JSR (jsr.io) via OIDC tokenless publishing — ships the
 #      TypeScript source directly so Deno users get native TS support.
-#   5. Creates a GitHub Release with the changelog entry as release notes.
+#   5. Verifies by DIGEST that the registries serve the artifact we built —
+#      not merely that they serve the version label.
+#   6. Creates a GitHub Release with the changelog entry as release notes.
 #
 # Pre-release checklist lives in RELEASING.md. Trusted Publisher setup on
 # npmjs.com and JSR linking are one-time manual steps also documented there.
@@ -109,6 +111,13 @@ jobs:
           registry-url: "https://registry.npmjs.org"
       - run: npm ci
       - run: npm run build
+      # Declare the intent before acting on it. "Already published" is a
+      # correct success for a RETRY and a failure for a NEW RELEASE, and the
+      # publisher cannot tell which because the caller has no way to say. This
+      # says. Without it, a no-op success is unclassifiable — which is how
+      # 0.16.0 and 0.17.0 shipped to npm and silently reached JSR not at all.
+      - name: Assert expected pre-state (no registry serves this version yet)
+        run: node scripts/verify-published.mjs prestate "${{ needs.verify-tag.outputs.version }}"
       - name: Publish to npm with provenance
         run: npm publish --provenance --access public
         env:
@@ -155,9 +164,33 @@ jobs:
           'Skipping, already published' warning above."
           exit 1
 
+  verify-artifact:
+    name: Verify the registries serve OUR artifact
+    needs: [verify-tag, publish, publish-jsr]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      # Checks BYTES, not the version label. `latest === X` says a registry
+      # serves that name; it does not say the artifact behind it is ours —
+      # it would be equally satisfied by someone else publishing that name
+      # and version. npm is compared by sha512 against the tarball we pack
+      # here. JSR rewrites module specifiers on publish so byte equality is
+      # impossible there for a CORRECT release; see scripts/verify-published.mjs
+      # for what is asserted instead and how that was found out.
+      - name: Digest verification
+        run: node scripts/verify-published.mjs digest "${{ needs.verify-tag.outputs.version }}"
+
   github-release:
     name: Create GitHub Release
-    needs: [verify-tag, publish, publish-jsr]
+    needs: [verify-tag, publish, publish-jsr, verify-artifact]
     runs-on: ubuntu-latest
     permissions:
       contents: write
