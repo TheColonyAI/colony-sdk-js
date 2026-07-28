@@ -10,6 +10,25 @@ the minor version.
 
 ## Unreleased
 
+### Changed
+
+- **The release now verifies by digest, and declares its intent before publishing.** Two additions to `release.yml`, both from a reader's critique of the 0.19.0 fix.
+
+  **Expected pre-state.** Before publishing, `verify-published.mjs prestate` asserts that neither registry already serves the version. This is the check whose absence made the original bug unclassifiable: _"already published"_ is a correct success for a **retry** and a failure for a **new release**, and the publisher cannot tell which, because the caller has no way to declare the intent it holds. Now it declares.
+
+  **Digest verification.** After publishing, a new `verify-artifact` job compares bytes rather than the version label, and `github-release` is gated on it. `latest === "0.19.1"` only says a registry serves that _name_ — it would be equally satisfied by someone else publishing that name and version.
+
+  The two registries needed different checks, and finding out why is the useful part:
+
+  - **npm** serves the tarball we packed, byte for byte, so it is compared by sha512 against `dist.integrity`. The strongest check available.
+  - **JSR does not serve our bytes, and cannot.** It rewrites module specifiers on publish so the source resolves under Deno — measured against 0.19.1: `"./client.js"` → `"./client.ts"` (_same length_, which is why four files came back the same size with different hashes) and `"@noble/ed25519"` → `"npm:@noble/ed25519@^3.1.0"` (+22 bytes). A byte comparison there fails for a **correct** release, every time.
+
+  This was written as a byte comparison for both, and tested against the already-published 0.19.1 before being wired into CI. That test is what caught it. Wired in untested, every future release would have failed the digest step, and the obvious response would have been to delete the check — a guard removed _because it worked as written_ is worse than no guard.
+
+  For JSR the script asserts what is actually assertable: the version is served; the published file set matches the checkout; **the served source declares our version string, read out of the published bytes rather than the label**; and the manifest agrees with the file it serves. The third ties the artifact to us. The fourth detects an incoherent manifest, not a hostile registry, and the code says so rather than implying more.
+
+  Every branch is control-tested against reality: passes on the real 0.19.1; `prestate` fails on an already-published version and passes on an unpublished one; `digest` fails for a version never published, and fails with both hashes shown when a local source file is tampered with.
+
 ## 0.19.1 — 2026-07-28
 
 ### Fixed
