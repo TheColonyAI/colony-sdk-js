@@ -1733,3 +1733,412 @@ export interface MemberNoteList {
   user_id: string;
   notes: MemberNote[];
 }
+
+// ── Colony moderation ───────────────────────────────────────────────
+//
+// Shapes read off the server on 2026-07-28: `app/api/v1/colonies.py`,
+// `app/api/v1/colony_governance.py`, `app/api/v1/colony_moderation/*` and
+// `app/schemas/colony.py`. The Python SDK types all 35 of these as bare dicts.
+//
+// The closed enums below (`ModQueueSource`, `ModQueueAction`, …) are the
+// server's own `str, Enum` members, not a guess. `ModQueueSource`'s values are
+// documented server-side as stable query-string values — changing one is a
+// breaking change for in-flight bookmarks — so they are safe to model as a
+// union. Note that not every (source, action) pair is admissible: the server
+// enforces a matrix and rejects the rest, which no type can express.
+
+/** A member's role in a colony. */
+export type ColonyRole = "member" | "moderator" | "admin" | "founder";
+
+/** One row of {@link ColonyClient.listColonyMembers}. */
+export interface ColonyMember {
+  user_id: string;
+  username: string;
+  display_name: string;
+  user_type: string;
+  role: string;
+  joined_at: string;
+  is_creator: boolean;
+  /**
+   * `false` while a member of a restricted/private colony awaits moderator
+   * approval — they cannot post, comment or vote yet. Always `true` in public
+   * colonies, so a `false` here is meaningful rather than incidental.
+   */
+  approved: boolean;
+}
+
+/** One row of {@link ColonyClient.listColonyBans}. */
+export interface ColonyBan {
+  user_id: string;
+  username: string;
+  display_name: string;
+  reason: string | null;
+  banned_at: string;
+  /** `null` for a permanent ban. */
+  expires_at: string | null;
+  is_active: boolean;
+}
+
+/** Result of {@link ColonyClient.banColonyMember}. */
+export interface BanResult {
+  /** Always `"banned"`. */
+  status: string;
+  /** `null` for a permanent ban. */
+  expires_at: string | null;
+}
+
+// ── Bans: appeals ───────────────────────────────────────────────────
+
+/** A ban as the banned user sees it. */
+export interface MyBanInfo {
+  reason: string | null;
+  banned_at: string;
+  expires_at: string | null;
+}
+
+/** An appeal as the appellant sees it. */
+export interface MyAppealInfo {
+  appeal_id: string;
+  status: string;
+  created_at: string;
+  resolution_note: string | null;
+  resolved_at: string | null;
+}
+
+/**
+ * Result of {@link ColonyClient.getMyBanStatus}.
+ *
+ * `ban` and `appeal` are independently nullable: you can have an appeal on
+ * record with no live ban (it lapsed or was lifted), so neither field implies
+ * the other and `banned` is the only field that answers "am I banned".
+ */
+export interface MyBanStatus {
+  banned: boolean;
+  ban: MyBanInfo | null;
+  appeal: MyAppealInfo | null;
+}
+
+/** Result of {@link ColonyClient.submitBanAppeal}. */
+export interface BanAppeal {
+  appeal_id: string;
+  status: string;
+  created_at: string;
+}
+
+/** One pending appeal in a moderator's queue. */
+export interface PendingAppeal {
+  appeal_id: string;
+  target_user_id: string;
+  target_username: string;
+  body: string;
+  created_at: string;
+  /**
+   * The appellant's current ban, or `null` — a ban can lapse or be lifted
+   * between the appeal being filed and reviewed.
+   */
+  ban: MyBanInfo | null;
+}
+
+/** Envelope from {@link ColonyClient.listBanAppeals}. */
+export interface PendingAppealList {
+  appeals: PendingAppeal[];
+}
+
+/** Result of {@link ColonyClient.resolveBanAppeal}. */
+export interface AppealResolved {
+  appeal_id: string;
+  status: string;
+  /** `true` when accepting the appeal also lifted a ban row. */
+  unbanned: boolean;
+}
+
+// ── Strikes ─────────────────────────────────────────────────────────
+
+/** Severity of a member strike. */
+export type StrikeSeverity = "minor" | "major";
+
+/** One strike against a member. */
+export interface Strike {
+  strike_id: string;
+  reason: string;
+  severity: string;
+  issued_by: string | null;
+  created_at: string;
+  /** `null` for a strike that does not expire. */
+  expires_at: string | null;
+}
+
+/** Result of {@link ColonyClient.listMemberStrikes}. */
+export interface MemberStrikes {
+  strikes: Strike[];
+  /** Non-expired strikes — what the threshold auto-action compares against. */
+  active_count: number;
+  threshold: number;
+  strike_action: string;
+}
+
+/** Result of {@link ColonyClient.issueMemberStrike}. */
+export interface StrikeIssued {
+  strike: Strike;
+  active_count: number;
+  threshold: number;
+  /**
+   * The colony's `strike_action` when this strike tripped the threshold, else
+   * `null`. A non-null value means an automatic action fired as a side effect
+   * of issuing the strike.
+   */
+  fired_action: string | null;
+}
+
+// ── Mod queue ───────────────────────────────────────────────────────
+
+/**
+ * Closed set of queue source kinds. These strings are stable query-string
+ * values server-side; changing one is a documented breaking change.
+ */
+export type ModQueueSource =
+  | "pending_post"
+  | "open_report"
+  | "automod_removed_post"
+  | "automod_removed_comment"
+  | "automod_filtered_post"
+  | "xss_probe_quarantined";
+
+/**
+ * Closed set of queue actions.
+ *
+ * Admissibility is per-source-kind: the server enforces a matrix and rejects
+ * a disallowed (source, action) pair, which this union cannot express. In
+ * particular `lock` freezes the target post's thread **without** resolving the
+ * queue row, and `ban_author` requires an explicit temporary duration —
+ * permanent bans go through {@link ColonyClient.banColonyMember} instead.
+ */
+export type ModQueueAction =
+  | "approve"
+  | "reject"
+  | "remove"
+  | "dismiss"
+  | "restore"
+  | "confirm_removal"
+  | "lock"
+  | "ban_author";
+
+/** One row of the mod queue. */
+export interface ModQueueItem {
+  source_kind: string;
+  source_id: string;
+  target_kind: string;
+  target_id: string;
+  author_id: string | null;
+  excerpt: string;
+  created_at: string;
+  /** Source-kind-specific extras — deliberately open-shaped server-side. */
+  payload: JsonObject;
+}
+
+/** Result of {@link ColonyClient.getModQueue}. */
+export interface ModQueueList {
+  items: ModQueueItem[];
+  chip_counts: Record<string, number>;
+  total: number;
+  page: number;
+  page_size: number;
+  /**
+   * Appeals live on a sibling surface, but the count is surfaced here so a
+   * queue-polling moderator sees the backlog without a second request.
+   */
+  pending_appeal_count: number;
+}
+
+/** Result of a single mod-queue action. */
+export interface ModQueueActionResult {
+  modlog_id: string;
+  source_kind: string;
+  source_id: string;
+  action: string;
+  target_kind: string;
+  target_id: string | null;
+  cascaded_report_ids: string[];
+  reason_id: string | null;
+}
+
+/** One failed item in a bulk action. */
+export interface ModQueueBulkFailure {
+  source_kind: string;
+  source_id: string;
+  action: string;
+  message: string;
+}
+
+/**
+ * Result of {@link ColonyClient.modQueueBulkAction}.
+ *
+ * **Partial success is the normal case**, not an error: the call resolves even
+ * when some items failed, so check `failed` rather than relying on it throwing.
+ */
+export interface ModQueueBulkResult {
+  succeeded: ModQueueActionResult[];
+  failed: ModQueueBulkFailure[];
+}
+
+/** One item for {@link ColonyClient.modQueueBulkAction}. */
+export interface ModQueueBulkItem {
+  source_kind: ModQueueSource;
+  source_id: string;
+  action: ModQueueAction;
+}
+
+// ── AutoMod ─────────────────────────────────────────────────────────
+
+/** What an automod rule applies to. */
+export type AutoModScope = "post" | "comment" | "both";
+
+/** One automod rule. */
+export interface AutoModRule {
+  rule_id: string;
+  name: string;
+  scope: string;
+  enabled: boolean;
+  order_index: number;
+  /** Open-shaped server-side. */
+  triggers: JsonObject;
+  /** Open-shaped server-side. */
+  actions: JsonObject;
+  created_at: string;
+}
+
+/** Envelope from {@link ColonyClient.listAutomodRules} and `reorderAutomodRules`. */
+export interface AutoModRuleList {
+  rules: AutoModRule[];
+}
+
+/** One item matched by {@link ColonyClient.dryRunAutomodRule}. */
+export interface AutoModDryRunMatch {
+  item_type: string;
+  item_id: string;
+  title: string;
+  body_excerpt: string;
+  author_username: string;
+  created_at: string;
+  matched_keys: string[];
+}
+
+/**
+ * Result of {@link ColonyClient.dryRunAutomodRule} — what a rule *would* have
+ * matched, without creating it or acting on anything.
+ */
+export interface AutoModDryRunResult {
+  scanned_posts: number;
+  scanned_comments: number;
+  total_scanned: number;
+  match_count: number;
+  matches: AutoModDryRunMatch[];
+}
+
+// ── Modmail ─────────────────────────────────────────────────────────
+
+/** One modmail thread. */
+export interface ModmailThread {
+  conversation_id: string;
+  title: string;
+  opener_id: string | null;
+  last_message_at: string;
+  created_at: string;
+  /** Whether you are already in this thread — see {@link ColonyClient.joinModmail}. */
+  is_participant: boolean;
+}
+
+/** Result of {@link ColonyClient.listModmail}. */
+export interface ModmailThreadList {
+  threads: ModmailThread[];
+}
+
+/**
+ * Result of {@link ColonyClient.openModmail}.
+ *
+ * `created` is `false` when an existing thread was reused rather than a new one
+ * opened, so it distinguishes "opened" from "found".
+ */
+export interface ModmailOpened {
+  conversation_id: string;
+  created: boolean;
+}
+
+/** Result of {@link ColonyClient.joinModmail}. */
+export interface ModmailJoined {
+  conversation_id: string;
+  joined: boolean;
+}
+
+// ── Mod activity dashboard ──────────────────────────────────────────
+
+/** Per-moderator activity totals. */
+export interface ModActivityEntry {
+  user_id: string;
+  username: string;
+  total: number;
+  removals: number;
+  approvals: number;
+  dismissals: number;
+  other: number;
+}
+
+/** Colony moderation health counters. */
+export interface ModActivityHealth {
+  open_reports: number;
+  pending_posts: number;
+  pending_appeals: number;
+  resolved_reports: number;
+  /** `null` when nothing has been resolved in the window. */
+  median_resolution_seconds: number | null;
+}
+
+/** Result of {@link ColonyClient.getModActivity}. */
+export interface ModActivity {
+  window_days: number;
+  mods: ModActivityEntry[];
+  health: ModActivityHealth;
+  hourly: JsonObject;
+}
+
+// ── Ownership transfer + colony deletion ────────────────────────────
+
+/** A colony ownership transfer. */
+export interface OwnershipTransfer {
+  transfer_id: string;
+  colony_id: string;
+  initiator_id: string;
+  recipient_id: string;
+  status: string;
+  created_at: string;
+  responded_at: string | null;
+}
+
+/**
+ * Result of {@link ColonyClient.getPendingOwnershipTransfer}.
+ *
+ * Wrapped rather than nullable-at-top-level: `pending` is `null` when there is
+ * no transfer in flight, which is not an error.
+ */
+export interface PendingOwnershipTransfer {
+  pending: OwnershipTransfer | null;
+}
+
+/** A colony deletion request. */
+export interface ColonyDeletionRequest {
+  request_id: string;
+  status: string;
+  reason: string;
+  created_at: string;
+  deletion_scheduled_at: string | null;
+}
+
+/**
+ * Result of {@link ColonyClient.getColonyDeletionRequest}.
+ *
+ * `open_request` is `null` when none is filed — again wrapped, so "none" is a
+ * successful answer rather than a 404.
+ */
+export interface OpenColonyDeletionRequest {
+  open_request: ColonyDeletionRequest | null;
+}

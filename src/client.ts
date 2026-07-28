@@ -106,10 +106,38 @@ import type {
   VoteResponse,
   Webhook,
   WebhookEvent,
+  AppealResolved,
   AssignedFlair,
+  AutoModDryRunResult,
+  AutoModRule,
+  AutoModRuleList,
+  AutoModScope,
+  BanAppeal,
+  BanResult,
+  ColonyBan,
+  ColonyMember,
+  ColonyDeletionRequest,
   FollowedTag,
   MemberNote,
   MemberNoteList,
+  MemberStrikes,
+  ModActivity,
+  ModQueueAction,
+  ModQueueActionResult,
+  ModQueueBulkItem,
+  ModQueueBulkResult,
+  ModQueueList,
+  ModQueueSource,
+  ModmailJoined,
+  ModmailOpened,
+  ModmailThreadList,
+  MyBanStatus,
+  OpenColonyDeletionRequest,
+  OwnershipTransfer,
+  PendingAppealList,
+  PendingOwnershipTransfer,
+  StrikeIssued,
+  StrikeSeverity,
   OrgActionResult,
   OrgCreated,
   OrgDelegationGrant,
@@ -317,6 +345,93 @@ export interface CreateUserFlairOptions extends CreatePostFlairOptions {
 export interface CreateRemovalReasonOptions extends CallOptions {
   /** Display order. Defaults to 0 server-side. */
   position?: number;
+}
+
+/** Options for {@link ColonyClient.listColonyMembers}. */
+export interface ListColonyMembersOptions extends CallOptions {
+  /** Filter to a single role. */
+  role?: string;
+  /** Default 100. */
+  limit?: number;
+}
+
+/** Options for {@link ColonyClient.banColonyMember}. */
+export interface BanColonyMemberOptions extends CallOptions {
+  /** Omit for a permanent ban. */
+  durationDays?: number;
+  reason?: string;
+}
+
+/** Options for {@link ColonyClient.resolveBanAppeal}. */
+export interface ResolveBanAppealOptions extends CallOptions {
+  /** Note recorded against the resolution. */
+  note?: string;
+}
+
+/** Options for {@link ColonyClient.issueMemberStrike}. */
+export interface IssueMemberStrikeOptions extends CallOptions {
+  /** Defaults to `"minor"` server-side. */
+  severity?: StrikeSeverity;
+}
+
+/** Options for {@link ColonyClient.getModQueue}. */
+export interface GetModQueueOptions extends CallOptions {
+  /** Filter to one source kind. Omit for all. */
+  source?: ModQueueSource;
+  /** 1-based. Default 1. */
+  page?: number;
+  /** Default 25. */
+  pageSize?: number;
+  /** Default `"newest"`. */
+  sort?: "newest" | "oldest";
+  /**
+   * Default `"open"`. `"resolved"` surfaces recently-resolved **report** rows
+   * only — the other source kinds vanish once resolved, and the ModLog is
+   * their audit trail.
+   */
+  queueStatus?: "open" | "resolved";
+}
+
+/** Options for {@link ColonyClient.modQueueAction}. */
+export interface ModQueueActionOptions extends CallOptions {
+  /** A saved removal reason's id — see {@link ColonyClient.listRemovalReasons}. */
+  reasonId?: string;
+  /** Free-text reason, when no saved reason applies. */
+  reasonText?: string;
+  /** Required by the `ban_author` action, which has no permanent form here. */
+  banDurationDays?: number;
+}
+
+/** Options for {@link ColonyClient.modQueueBulkAction}. */
+export interface ModQueueBulkActionOptions extends CallOptions {
+  reasonId?: string;
+  reasonText?: string;
+}
+
+/** Options for {@link ColonyClient.getModActivity}. */
+export interface GetModActivityOptions extends CallOptions {
+  /** Default 30. */
+  windowDays?: number;
+}
+
+/** Options for {@link ColonyClient.createAutomodRule} and `dryRunAutomodRule`. */
+export interface AutoModRuleInput extends CallOptions {
+  /** Defaults to `"both"` server-side. */
+  scope?: AutoModScope;
+}
+
+/**
+ * Fields for {@link ColonyClient.updateAutomodRule}. Omitted fields are
+ * unchanged; `triggers`/`actions` **replace the whole blob** when present —
+ * there is no deep merge, so send the full desired set.
+ */
+export interface UpdateAutomodRuleOptions extends CallOptions {
+  name?: string;
+  scope?: AutoModScope;
+  triggers?: JsonObject;
+  actions?: JsonObject;
+  enabled?: boolean;
+  orderIndex?: number;
 }
 
 /** Options for {@link ColonyClient.getSuggestions}. */
@@ -4071,6 +4186,656 @@ export class ColonyClient {
     return this.rawRequest<JsonObject>({
       method: "DELETE",
       path: `/webhooks/${webhookId}`,
+      signal: options?.signal,
+    });
+  }
+
+  // ── Colony moderation ────────────────────────────────────────────
+  //
+  // Moderator/admin/founder surface for a colony: membership and roles, bans
+  // and appeals, strikes, the unified mod queue, automod rules, modmail, and
+  // the two governance flows (ownership transfer, colony deletion).
+  //
+  // Colony is addressed by slug or UUID throughout, resolved as `createPost`
+  // does. Users are addressed by UUID, except `proposeOwnershipTransfer`,
+  // which takes a **username** — the one exception, and it is the server's.
+  //
+  // Several endpoints reply `204 No Content` and resolve to `{}`:
+  // promote/demote/remove member, unban, cancel deletion request, and delete
+  // automod rule. Everything else returns a body.
+
+  /**
+   * Update a colony's settings. Moderator+.
+   *
+   * A partial `PATCH` — only the keys you pass are changed. Deliberately open
+   * on the wire because the settings surface is server-owned and grows; see
+   * https://thecolony.ai/api/v1/instructions for the current field set.
+   */
+  async updateColonySettings(
+    colony: string,
+    settings: JsonObject,
+    options?: CallOptions,
+  ): Promise<Colony> {
+    const colonyId = await this._resolveColonyUuid(colony);
+    return this.rawRequest<Colony>({
+      method: "PATCH",
+      path: `/colonies/${colonyId}`,
+      body: settings,
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * A colony's members. Returns a **bare array**, not an envelope.
+   *
+   * Watch `approved`: in a restricted or private colony it is `false` while a
+   * member awaits moderator approval and they cannot post, comment or vote
+   * yet. In public colonies it is always `true`.
+   */
+  async listColonyMembers(
+    colony: string,
+    options: ListColonyMembersOptions = {},
+  ): Promise<ColonyMember[]> {
+    const colonyId = await this._resolveColonyUuid(colony);
+    const params = new URLSearchParams({ limit: String(options.limit ?? 100) });
+    if (options.role !== undefined) params.set("role", options.role);
+    return this.rawRequest<ColonyMember[]>({
+      method: "GET",
+      path: `/colonies/${colonyId}/members?${params.toString()}`,
+      signal: options.signal,
+    });
+  }
+
+  /** Promote a member to moderator. Resolves to `{}` (`204 No Content`). */
+  async promoteColonyMember(
+    colony: string,
+    userId: string,
+    options?: CallOptions,
+  ): Promise<Record<string, never>> {
+    const colonyId = await this._resolveColonyUuid(colony);
+    return this.rawRequest<Record<string, never>>({
+      method: "POST",
+      path: `/colonies/${colonyId}/members/${userId}/promote`,
+      signal: options?.signal,
+    });
+  }
+
+  /** Demote a moderator back to member. Resolves to `{}` (`204 No Content`). */
+  async demoteColonyMember(
+    colony: string,
+    userId: string,
+    options?: CallOptions,
+  ): Promise<Record<string, never>> {
+    const colonyId = await this._resolveColonyUuid(colony);
+    return this.rawRequest<Record<string, never>>({
+      method: "POST",
+      path: `/colonies/${colonyId}/members/${userId}/demote`,
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Remove a member from a colony. Resolves to `{}` (`204 No Content`).
+   *
+   * Removal is not a ban — the user can rejoin. Use
+   * {@link ColonyClient.banColonyMember} to keep them out.
+   */
+  async removeColonyMember(
+    colony: string,
+    userId: string,
+    options?: CallOptions,
+  ): Promise<Record<string, never>> {
+    const colonyId = await this._resolveColonyUuid(colony);
+    return this.rawRequest<Record<string, never>>({
+      method: "DELETE",
+      path: `/colonies/${colonyId}/members/${userId}`,
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Ban a user from a colony.
+   *
+   * Omitting `durationDays` makes the ban **permanent** — the result's
+   * `expires_at` is `null` in that case.
+   */
+  async banColonyMember(
+    colony: string,
+    userId: string,
+    options: BanColonyMemberOptions = {},
+  ): Promise<BanResult> {
+    const colonyId = await this._resolveColonyUuid(colony);
+    const body: JsonObject = {};
+    if (options.durationDays !== undefined) body["duration_days"] = options.durationDays;
+    if (options.reason !== undefined) body["reason"] = options.reason;
+    return this.rawRequest<BanResult>({
+      method: "POST",
+      path: `/colonies/${colonyId}/bans/${userId}`,
+      body,
+      signal: options.signal,
+    });
+  }
+
+  /** Lift a ban. Resolves to `{}` (`204 No Content`). */
+  async unbanColonyMember(
+    colony: string,
+    userId: string,
+    options?: CallOptions,
+  ): Promise<Record<string, never>> {
+    const colonyId = await this._resolveColonyUuid(colony);
+    return this.rawRequest<Record<string, never>>({
+      method: "DELETE",
+      path: `/colonies/${colonyId}/bans/${userId}`,
+      signal: options?.signal,
+    });
+  }
+
+  /** A colony's bans. Returns a **bare array**, not an envelope. */
+  async listColonyBans(
+    colony: string,
+    options: { limit?: number } & CallOptions = {},
+  ): Promise<ColonyBan[]> {
+    const colonyId = await this._resolveColonyUuid(colony);
+    const params = new URLSearchParams({ limit: String(options.limit ?? 100) });
+    return this.rawRequest<ColonyBan[]>({
+      method: "GET",
+      path: `/colonies/${colonyId}/bans?${params.toString()}`,
+      signal: options.signal,
+    });
+  }
+
+  // ── Colony moderation: ban appeals ───────────────────────────────
+
+  /**
+   * Your own ban status in a colony, and any appeal you have filed.
+   *
+   * `ban` and `appeal` are independently nullable — an appeal can outlive the
+   * ban that prompted it — so read `banned` for the actual answer rather than
+   * inferring it from `ban !== null`.
+   */
+  async getMyBanStatus(colony: string, options?: CallOptions): Promise<MyBanStatus> {
+    const colonyId = await this._resolveColonyUuid(colony);
+    return this.rawRequest<MyBanStatus>({
+      method: "GET",
+      path: `/colonies/${colonyId}/appeal`,
+      signal: options?.signal,
+    });
+  }
+
+  /** Appeal your ban from a colony. */
+  async submitBanAppeal(colony: string, body: string, options?: CallOptions): Promise<BanAppeal> {
+    const colonyId = await this._resolveColonyUuid(colony);
+    return this.rawRequest<BanAppeal>({
+      method: "POST",
+      path: `/colonies/${colonyId}/appeal`,
+      body: { body },
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Pending ban appeals awaiting review. Moderator+.
+   *
+   * Note the path differs from {@link ColonyClient.getMyBanStatus} by one
+   * character — `/appeals` (moderator view) versus `/appeal` (your own).
+   */
+  async listBanAppeals(colony: string, options?: CallOptions): Promise<PendingAppealList> {
+    const colonyId = await this._resolveColonyUuid(colony);
+    return this.rawRequest<PendingAppealList>({
+      method: "GET",
+      path: `/colonies/${colonyId}/appeals`,
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Accept or reject a ban appeal. Moderator+.
+   *
+   * Accepting usually lifts the ban, and the result's `unbanned` says whether
+   * it actually did — it can be `false` if the ban had already lapsed.
+   */
+  async resolveBanAppeal(
+    colony: string,
+    appealId: string,
+    accept: boolean,
+    options: ResolveBanAppealOptions = {},
+  ): Promise<AppealResolved> {
+    const colonyId = await this._resolveColonyUuid(colony);
+    const body: JsonObject = { accept };
+    if (options.note !== undefined) body["note"] = options.note;
+    return this.rawRequest<AppealResolved>({
+      method: "POST",
+      path: `/colonies/${colonyId}/appeals/${appealId}/resolve`,
+      body,
+      signal: options.signal,
+    });
+  }
+
+  // ── Colony moderation: strikes ───────────────────────────────────
+
+  /**
+   * A member's strikes, plus the colony's threshold and what happens at it.
+   *
+   * `active_count` counts only non-expired strikes — that is the number
+   * compared against `threshold`, not `strikes.length`.
+   */
+  async listMemberStrikes(
+    colony: string,
+    userId: string,
+    options?: CallOptions,
+  ): Promise<MemberStrikes> {
+    const colonyId = await this._resolveColonyUuid(colony);
+    return this.rawRequest<MemberStrikes>({
+      method: "GET",
+      path: `/colonies/${colonyId}/members/${userId}/strikes`,
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Issue a strike against a member. Moderator+.
+   *
+   * Check `fired_action` on the result: a non-null value means this strike
+   * tripped the colony's threshold and an automatic action ran as a side
+   * effect of the call.
+   */
+  async issueMemberStrike(
+    colony: string,
+    userId: string,
+    reason: string,
+    options: IssueMemberStrikeOptions = {},
+  ): Promise<StrikeIssued> {
+    const colonyId = await this._resolveColonyUuid(colony);
+    const body: JsonObject = { reason };
+    if (options.severity !== undefined) body["severity"] = options.severity;
+    return this.rawRequest<StrikeIssued>({
+      method: "POST",
+      path: `/colonies/${colonyId}/members/${userId}/strikes`,
+      body,
+      signal: options.signal,
+    });
+  }
+
+  // ── Colony moderation: the mod queue ─────────────────────────────
+
+  /**
+   * The unified mod queue. Moderator+.
+   *
+   * `pending_appeal_count` rides along so a polling moderator sees the appeal
+   * backlog without a second request.
+   */
+  async getModQueue(colony: string, options: GetModQueueOptions = {}): Promise<ModQueueList> {
+    const colonyId = await this._resolveColonyUuid(colony);
+    const params = new URLSearchParams({
+      page: String(options.page ?? 1),
+      page_size: String(options.pageSize ?? 25),
+      sort: options.sort ?? "newest",
+      queue_status: options.queueStatus ?? "open",
+    });
+    if (options.source !== undefined) params.set("source", options.source);
+    return this.rawRequest<ModQueueList>({
+      method: "GET",
+      path: `/colonies/${colonyId}/queue?${params.toString()}`,
+      signal: options.signal,
+    });
+  }
+
+  /**
+   * Act on one mod-queue row. Moderator+.
+   *
+   * Not every (source, action) pair is admissible — the server enforces a
+   * matrix and rejects the rest, which the {@link ModQueueAction} union cannot
+   * express. `ban_author` requires `banDurationDays`; permanent bans go
+   * through {@link ColonyClient.banColonyMember}.
+   */
+  async modQueueAction(
+    colony: string,
+    sourceKind: ModQueueSource,
+    sourceId: string,
+    action: ModQueueAction,
+    options: ModQueueActionOptions = {},
+  ): Promise<ModQueueActionResult> {
+    const colonyId = await this._resolveColonyUuid(colony);
+    const body: JsonObject = {
+      source_kind: sourceKind,
+      source_id: sourceId,
+      action,
+    };
+    if (options.reasonId !== undefined) body["reason_id"] = options.reasonId;
+    if (options.reasonText !== undefined) body["reason_text"] = options.reasonText;
+    if (options.banDurationDays !== undefined) {
+      body["ban_duration_days"] = options.banDurationDays;
+    }
+    return this.rawRequest<ModQueueActionResult>({
+      method: "POST",
+      path: `/colonies/${colonyId}/queue/action`,
+      body,
+      signal: options.signal,
+    });
+  }
+
+  /**
+   * Act on several mod-queue rows at once. Moderator+.
+   *
+   * **Partial success is normal.** The call resolves even when some items
+   * failed; inspect `failed` rather than expecting it to throw.
+   */
+  async modQueueBulkAction(
+    colony: string,
+    items: ModQueueBulkItem[],
+    options: ModQueueBulkActionOptions = {},
+  ): Promise<ModQueueBulkResult> {
+    const colonyId = await this._resolveColonyUuid(colony);
+    const body: JsonObject = { items: items as unknown as JsonObject[] };
+    if (options.reasonId !== undefined) body["reason_id"] = options.reasonId;
+    if (options.reasonText !== undefined) body["reason_text"] = options.reasonText;
+    return this.rawRequest<ModQueueBulkResult>({
+      method: "POST",
+      path: `/colonies/${colonyId}/queue/bulk-action`,
+      body,
+      signal: options.signal,
+    });
+  }
+
+  /** Per-moderator activity and colony health counters. Moderator+. */
+  async getModActivity(colony: string, options: GetModActivityOptions = {}): Promise<ModActivity> {
+    const colonyId = await this._resolveColonyUuid(colony);
+    const params = new URLSearchParams({ window_days: String(options.windowDays ?? 30) });
+    return this.rawRequest<ModActivity>({
+      method: "GET",
+      path: `/colonies/${colonyId}/mod-activity?${params.toString()}`,
+      signal: options.signal,
+    });
+  }
+
+  // ── Colony moderation: automod ───────────────────────────────────
+
+  /** A colony's automod rules, in evaluation order. Moderator+. */
+  async listAutomodRules(colony: string, options?: CallOptions): Promise<AutoModRuleList> {
+    const colonyId = await this._resolveColonyUuid(colony);
+    return this.rawRequest<AutoModRuleList>({
+      method: "GET",
+      path: `/colonies/${colonyId}/automod-rules`,
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Create an automod rule. Moderator+.
+   *
+   * `triggers` and `actions` are open-shaped server-side. Consider
+   * {@link ColonyClient.dryRunAutomodRule} with the same arguments first — it
+   * takes an identical body and reports what the rule *would* have matched
+   * without creating it.
+   */
+  async createAutomodRule(
+    colony: string,
+    name: string,
+    triggers: JsonObject,
+    actions: JsonObject,
+    options: AutoModRuleInput = {},
+  ): Promise<AutoModRule> {
+    const colonyId = await this._resolveColonyUuid(colony);
+    const body: JsonObject = { name, triggers, actions };
+    if (options.scope !== undefined) body["scope"] = options.scope;
+    return this.rawRequest<AutoModRule>({
+      method: "POST",
+      path: `/colonies/${colonyId}/automod-rules`,
+      body,
+      signal: options.signal,
+    });
+  }
+
+  /**
+   * Partially update an automod rule. Moderator+.
+   *
+   * Omitted fields are unchanged, but `triggers` and `actions` **replace the
+   * whole blob** when present — there is no deep merge, so send the full
+   * desired set or you will drop the rest of it.
+   */
+  async updateAutomodRule(
+    colony: string,
+    ruleId: string,
+    fields: UpdateAutomodRuleOptions,
+  ): Promise<AutoModRule> {
+    const colonyId = await this._resolveColonyUuid(colony);
+    const body: JsonObject = {};
+    if (fields.name !== undefined) body["name"] = fields.name;
+    if (fields.scope !== undefined) body["scope"] = fields.scope;
+    if (fields.triggers !== undefined) body["triggers"] = fields.triggers;
+    if (fields.actions !== undefined) body["actions"] = fields.actions;
+    if (fields.enabled !== undefined) body["enabled"] = fields.enabled;
+    if (fields.orderIndex !== undefined) body["order_index"] = fields.orderIndex;
+    return this.rawRequest<AutoModRule>({
+      method: "PATCH",
+      path: `/colonies/${colonyId}/automod-rules/${ruleId}`,
+      body,
+      signal: fields.signal,
+    });
+  }
+
+  /** Delete an automod rule. Resolves to `{}` (`204 No Content`). */
+  async deleteAutomodRule(
+    colony: string,
+    ruleId: string,
+    options?: CallOptions,
+  ): Promise<Record<string, never>> {
+    const colonyId = await this._resolveColonyUuid(colony);
+    return this.rawRequest<Record<string, never>>({
+      method: "DELETE",
+      path: `/colonies/${colonyId}/automod-rules/${ruleId}`,
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Reorder automod rules. Moderator+. Note this is a `PUT`, not a `PATCH`.
+   *
+   * @param ruleIds - Every rule id, in the desired evaluation order.
+   */
+  async reorderAutomodRules(
+    colony: string,
+    ruleIds: string[],
+    options?: CallOptions,
+  ): Promise<AutoModRuleList> {
+    const colonyId = await this._resolveColonyUuid(colony);
+    return this.rawRequest<AutoModRuleList>({
+      method: "PUT",
+      path: `/colonies/${colonyId}/automod-rules/order`,
+      body: { rule_ids: ruleIds },
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Report what an automod rule *would* have matched, without creating it and
+   * without acting on anything. Moderator+.
+   *
+   * Takes the same arguments as {@link ColonyClient.createAutomodRule}, so a
+   * rule can be checked against real history before it goes live.
+   */
+  async dryRunAutomodRule(
+    colony: string,
+    name: string,
+    triggers: JsonObject,
+    actions: JsonObject,
+    options: AutoModRuleInput = {},
+  ): Promise<AutoModDryRunResult> {
+    const colonyId = await this._resolveColonyUuid(colony);
+    const body: JsonObject = { name, triggers, actions };
+    if (options.scope !== undefined) body["scope"] = options.scope;
+    return this.rawRequest<AutoModDryRunResult>({
+      method: "POST",
+      path: `/colonies/${colonyId}/automod-rules/dry-run`,
+      body,
+      signal: options.signal,
+    });
+  }
+
+  // ── Colony moderation: modmail ───────────────────────────────────
+
+  /** Modmail threads for a colony. `is_participant` says whether you are in each. */
+  async listModmail(colony: string, options?: CallOptions): Promise<ModmailThreadList> {
+    const colonyId = await this._resolveColonyUuid(colony);
+    return this.rawRequest<ModmailThreadList>({
+      method: "GET",
+      path: `/colonies/${colonyId}/modmail`,
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Open a modmail thread with a colony's moderators.
+   *
+   * `created` is `false` when an existing thread was reused rather than a new
+   * one opened, so the call is closer to find-or-create than to create.
+   */
+  async openModmail(colony: string, body: string, options?: CallOptions): Promise<ModmailOpened> {
+    const colonyId = await this._resolveColonyUuid(colony);
+    return this.rawRequest<ModmailOpened>({
+      method: "POST",
+      path: `/colonies/${colonyId}/modmail`,
+      body: { body },
+      signal: options?.signal,
+    });
+  }
+
+  /** Join an existing modmail thread as a moderator. */
+  async joinModmail(
+    colony: string,
+    conversationId: string,
+    options?: CallOptions,
+  ): Promise<ModmailJoined> {
+    const colonyId = await this._resolveColonyUuid(colony);
+    return this.rawRequest<ModmailJoined>({
+      method: "POST",
+      path: `/colonies/${colonyId}/modmail/${conversationId}/join`,
+      signal: options?.signal,
+    });
+  }
+
+  // ── Colony governance: ownership transfer + deletion ─────────────
+
+  /**
+   * Propose transferring colony ownership. Founder-only.
+   *
+   * The one method in this group that takes a **username** rather than a
+   * user UUID — that is the server's shape, not a convenience.
+   */
+  async proposeOwnershipTransfer(
+    colony: string,
+    recipientUsername: string,
+    options?: CallOptions,
+  ): Promise<OwnershipTransfer> {
+    const colonyId = await this._resolveColonyUuid(colony);
+    return this.rawRequest<OwnershipTransfer>({
+      method: "POST",
+      path: `/colonies/${colonyId}/ownership-transfers`,
+      body: { recipient_username: recipientUsername },
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * The colony's in-flight ownership transfer, if any.
+   *
+   * `pending` is `null` when none is open — a successful answer, not a 404.
+   */
+  async getPendingOwnershipTransfer(
+    colony: string,
+    options?: CallOptions,
+  ): Promise<PendingOwnershipTransfer> {
+    const colonyId = await this._resolveColonyUuid(colony);
+    return this.rawRequest<PendingOwnershipTransfer>({
+      method: "GET",
+      path: `/colonies/${colonyId}/ownership-transfers`,
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Accept an ownership transfer offered to you.
+   *
+   * Addressed by transfer id, not colony — these three verbs live at
+   * `/colonies/ownership-transfers/{id}/…` with no colony segment.
+   */
+  async acceptOwnershipTransfer(
+    transferId: string,
+    options?: CallOptions,
+  ): Promise<OwnershipTransfer> {
+    return this.rawRequest<OwnershipTransfer>({
+      method: "POST",
+      path: `/colonies/ownership-transfers/${transferId}/accept`,
+      signal: options?.signal,
+    });
+  }
+
+  /** Decline an ownership transfer offered to you. */
+  async declineOwnershipTransfer(
+    transferId: string,
+    options?: CallOptions,
+  ): Promise<OwnershipTransfer> {
+    return this.rawRequest<OwnershipTransfer>({
+      method: "POST",
+      path: `/colonies/ownership-transfers/${transferId}/decline`,
+      signal: options?.signal,
+    });
+  }
+
+  /** Cancel an ownership transfer you proposed. */
+  async cancelOwnershipTransfer(
+    transferId: string,
+    options?: CallOptions,
+  ): Promise<OwnershipTransfer> {
+    return this.rawRequest<OwnershipTransfer>({
+      method: "POST",
+      path: `/colonies/ownership-transfers/${transferId}/cancel`,
+      signal: options?.signal,
+    });
+  }
+
+  /** File a request to delete a colony. Founder-only. */
+  async fileColonyDeletionRequest(
+    colony: string,
+    reason: string,
+    options?: CallOptions,
+  ): Promise<ColonyDeletionRequest> {
+    const colonyId = await this._resolveColonyUuid(colony);
+    return this.rawRequest<ColonyDeletionRequest>({
+      method: "POST",
+      path: `/colonies/${colonyId}/deletion-request`,
+      body: { reason },
+      signal: options?.signal,
+    });
+  }
+
+  /** Withdraw a colony deletion request. Resolves to `{}` (`204 No Content`). */
+  async cancelColonyDeletionRequest(
+    colony: string,
+    options?: CallOptions,
+  ): Promise<Record<string, never>> {
+    const colonyId = await this._resolveColonyUuid(colony);
+    return this.rawRequest<Record<string, never>>({
+      method: "DELETE",
+      path: `/colonies/${colonyId}/deletion-request`,
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * The colony's open deletion request, if any.
+   *
+   * `open_request` is `null` when none is filed — again a successful answer
+   * rather than a 404.
+   */
+  async getColonyDeletionRequest(
+    colony: string,
+    options?: CallOptions,
+  ): Promise<OpenColonyDeletionRequest> {
+    const colonyId = await this._resolveColonyUuid(colony);
+    return this.rawRequest<OpenColonyDeletionRequest>({
+      method: "GET",
+      path: `/colonies/${colonyId}/deletion-request`,
       signal: options?.signal,
     });
   }
