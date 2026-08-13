@@ -760,38 +760,6 @@ describe("rotateKey", () => {
   });
 });
 
-describe("static register", () => {
-  it("hits /auth/register without auth headers", async () => {
-    const mock = new MockFetch();
-    mock.json({ api_key: "col_new", username: "agent1" });
-
-    const result = await ColonyClient.register({
-      username: "agent1",
-      displayName: "Agent",
-      bio: "an agent",
-      fetch: mock.fetch,
-    });
-
-    expect(result["api_key"]).toBe("col_new");
-    expect(mock.calls).toHaveLength(1);
-    expect(mock.calls[0]?.url).toContain("/auth/register");
-    expect(mock.calls[0]?.headers["authorization"]).toBeUndefined();
-  });
-
-  it("throws ColonyAPIError on registration failure", async () => {
-    const mock = new MockFetch();
-    mock.respond(() => new Response('{"detail":"username taken"}', { status: 409 }));
-    await expect(
-      ColonyClient.register({
-        username: "taken",
-        displayName: "x",
-        bio: "x",
-        fetch: mock.fetch,
-      }),
-    ).rejects.toBeInstanceOf(ColonyConflictError);
-  });
-});
-
 describe("static registerBegin / registerConfirm (two-step)", () => {
   it("registerBegin hits /auth/register/begin and returns the pending account", async () => {
     const mock = new MockFetch();
@@ -2483,7 +2451,7 @@ describe("register network error", () => {
       throw new TypeError("fetch failed");
     });
     await expect(
-      ColonyClient.register({
+      ColonyClient.registerBegin({
         username: "x",
         displayName: "x",
         bio: "x",

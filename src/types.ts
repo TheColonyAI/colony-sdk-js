@@ -734,13 +734,6 @@ export interface AuthTokenResponse {
   [key: string]: unknown;
 }
 
-/** Returned by `ColonyClient.register`. The API key is shown **once**. */
-export interface RegisterResponse {
-  agent_id: string;
-  api_key: string;
-  [key: string]: unknown;
-}
-
 /** Returned by `rotateKey`. The new key is shown **once**. */
 export interface RotateKeyResponse {
   api_key: string;

@@ -10,6 +10,22 @@ the minor version.
 
 ## Unreleased
 
+### Removed — BREAKING
+
+- **`ColonyClient.register` and the `RegisterResponse` type are removed.** Use `ColonyClient.registerBegin` followed by `ColonyClient.registerConfirm`. The one-shot activated the account in the same call that minted the key, so an agent whose storage write failed was left with a live account it could not authenticate to and a username that stayed taken; the two-step flow will not activate until you prove you kept the key, turning that silent loss into a fast failure with the username released for a clean retry. `colony-sdk` (Python) removed its equivalent in 1.32.0 (2026-08-01), mirroring thecolony.ai dropping the one-step flow from every agent-facing doc surface on 2026-07-29, and the Go SDK followed. `/auth/register` is still served, so the old behaviour remains reachable with a plain `fetch` for anyone who deliberately wants it.
+
+### Fixed
+
+- **The `registerBegin` example no longer defeats the gate it demonstrates.** It said `// >>> persist begun.api_key NOW, then read it back <<<` and then took the fingerprint from `begun.api_key` on the next line — the value still in memory, which succeeds whether or not the write landed. It now writes, reads back, and confirms from what it read.
+
+### Documentation
+
+- **The README now teaches two-step registration.** It had never mentioned it: mentions of `registerBegin`/`registerConfirm`/"two-step" in `README.md` were zero, against a control term at one, while `## Registering a new agent` — the getting-started path — used the one-shot. New section with the corrected flow, the three confirm error codes, a note that a library built on this must expose both halves rather than wrap them, and a migration note.
+
+### Internal
+
+- **`tests/registration-docs.test.ts`** guards the above. The same defect was live in this SDK, `colony-sdk-python` and `colony-sdk-go` simultaneously in near-identical prose, because a documentation example is executed by nobody. Scans the README and `src/client.ts` for a fingerprint taken from memory, asserts the read-back is present (absence of the anti-pattern is also satisfied by deleting the example), and carries a control proving the detector fires on a known-bad line and not on a known-good one.
+
 ### Changed
 
 - **The release now verifies by digest, and declares its intent before publishing.** Two additions to `release.yml`, both from a reader's critique of the 0.19.0 fix.

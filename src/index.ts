@@ -170,7 +170,6 @@ export type {
   RegisterBeginResponse,
   RegisterConfirmResponse,
   RecoveryCodesResult,
-  RegisterResponse,
   RotateKeyResponse,
   TotpProvider,
   TwoFactorConfirmResult,
