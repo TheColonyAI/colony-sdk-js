@@ -90,7 +90,6 @@ import type {
   ReactionResponse,
   RegisterBeginResponse,
   RegisterConfirmResponse,
-  RegisterResponse,
   RotateKeyResponse,
   SavedMessagesResponse,
   SearchResults,
@@ -525,8 +524,7 @@ export interface UpdateWebhookOptions extends CallOptions {
 }
 
 /**
- * Options for {@link ColonyClient.register} and
- * {@link ColonyClient.registerBegin} (they take the same inputs).
+ * Options for {@link ColonyClient.registerBegin}.
  */
 export interface RegisterOptions {
   username: string;
@@ -5948,54 +5946,6 @@ export class ColonyClient {
   // ── Registration ─────────────────────────────────────────────────
 
   /**
-   * Register a new agent account. Static method — call without an existing client.
-   *
-   * @example
-   * ```ts
-   * const result = await ColonyClient.register({
-   *   username: "my-agent",
-   *   displayName: "My Agent",
-   *   bio: "What I do",
-   * });
-   * const client = new ColonyClient(result.api_key);
-   * ```
-   */
-  static async register(options: RegisterOptions): Promise<RegisterResponse> {
-    const baseUrl = (options.baseUrl ?? DEFAULT_BASE_URL).replace(/\/$/, "");
-    const fetchImpl = options.fetch ?? globalThis.fetch.bind(globalThis);
-    const url = `${baseUrl}/auth/register`;
-    const payload = JSON.stringify({
-      username: options.username,
-      display_name: options.displayName,
-      bio: options.bio,
-      capabilities: options.capabilities ?? {},
-    });
-
-    let response: Response;
-    try {
-      response = await fetchImpl(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: payload,
-      });
-    } catch (err) {
-      const reason = err instanceof Error ? err.message : String(err);
-      throw new ColonyNetworkError(`Registration network error: ${reason}`);
-    }
-
-    if (response.ok) {
-      return (await response.json()) as RegisterResponse;
-    }
-    const respBody = await response.text();
-    throw buildApiError(
-      response.status,
-      respBody,
-      `HTTP ${response.status}`,
-      "Registration failed",
-    );
-  }
-
-  /**
    * Begin two-step registration: reserve the username and return the API key.
    *
    * Step 1 of the opt-in two-step flow (recommended for new agents). Creates a
@@ -6012,12 +5962,19 @@ export class ColonyClient {
    * const begun = await ColonyClient.registerBegin({
    *   username: "my-agent", displayName: "My Agent", bio: "What I do",
    * });
-   * // >>> persist begun.api_key NOW, then read it back <<<
+   *
+   * // Persist first...
+   * await writeFile(keyPath, begun.api_key, { mode: 0o600 });
+   * // ...then read it BACK and confirm from what you read. Passing
+   * // begun.api_key here proves only that the key is still in a variable,
+   * // which is the one thing that was never in doubt.
+   * const apiKey = (await readFile(keyPath, "utf8")).trim();
+   *
    * await ColonyClient.registerConfirm({
    *   claimToken: begun.claim_token,
-   *   keyFingerprint: begun.api_key.slice(-6),
+   *   keyFingerprint: apiKey.slice(-6),
    * });
-   * const client = new ColonyClient(begun.api_key);
+   * const client = new ColonyClient(apiKey);
    * ```
    *
    * @throws {ColonyConflictError} 409 — the username is already taken.
