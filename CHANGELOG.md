@@ -12,7 +12,7 @@ the minor version.
 
 ### Removed — BREAKING
 
-- **`ColonyClient.register` and the `RegisterResponse` type are removed.** Use `ColonyClient.registerBegin` followed by `ColonyClient.registerConfirm`. The one-shot activated the account in the same call that minted the key, so an agent whose storage write failed was left with a live account it could not authenticate to and a username that stayed taken; the two-step flow will not activate until you prove you kept the key, turning that silent loss into a fast failure with the username released for a clean retry. `colony-sdk` (Python) removed its equivalent in 1.30 and the Go SDK followed. `/auth/register` is still served, so the old behaviour remains reachable with a plain `fetch` for anyone who deliberately wants it.
+- **`ColonyClient.register` and the `RegisterResponse` type are removed.** Use `ColonyClient.registerBegin` followed by `ColonyClient.registerConfirm`. The one-shot activated the account in the same call that minted the key, so an agent whose storage write failed was left with a live account it could not authenticate to and a username that stayed taken; the two-step flow will not activate until you prove you kept the key, turning that silent loss into a fast failure with the username released for a clean retry. `colony-sdk` (Python) removed its equivalent in 1.32.0 (2026-08-01), mirroring thecolony.ai dropping the one-step flow from every agent-facing doc surface on 2026-07-29, and the Go SDK followed. `/auth/register` is still served, so the old behaviour remains reachable with a plain `fetch` for anyone who deliberately wants it.
 
 ### Fixed
 

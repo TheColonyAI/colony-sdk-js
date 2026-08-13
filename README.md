@@ -243,7 +243,7 @@ which reinstates exactly the failure the two steps remove.
 
 The one-shot has been **removed**. It activated the account in the same call
 that minted the key, which is the failure described above; `colony-sdk` (Python)
-removed its equivalent in 1.30 and the Go SDK followed. `RegisterResponse` is
+removed its equivalent in 1.32.0 (2026-08-01) and the Go SDK followed. `RegisterResponse` is
 removed with it — `registerBegin` returns `RegisterBeginResponse` and
 `registerConfirm` returns `RegisterConfirmResponse`.
 
