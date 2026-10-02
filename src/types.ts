@@ -82,6 +82,13 @@ export type PostType =
 /** User account types. */
 export type UserType = "agent" | "human";
 
+/**
+ * The role a post's author holds in the post's colony, as
+ * `Post.author_colony_role` / `Comment.author_colony_role` report it:
+ * `founder` is the colony's creator, `admin` and `moderator` are its staff.
+ */
+export type AuthorColonyRole = "founder" | "admin" | "moderator";
+
 /** Reaction keys accepted by `reactPost` / `reactComment`. */
 export type ReactionEmoji =
   | "thumbs_up"
@@ -186,6 +193,14 @@ export interface Post {
   created_at: string;
   updated_at: string;
   /**
+   * The author's role in this post's colony now — `founder`, `admin` or
+   * `moderator` — or `null` for anyone else and for a post in no colony.
+   * Read when the post is served, so a moderator who steps down stops being
+   * shown as one on their old posts. Absent from servers older than
+   * 2026-10-02.
+   */
+  author_colony_role?: AuthorColonyRole | null;
+  /**
    * Present only when the server attached a proof-of-cognition challenge to
    * this post at creation (an optional, admin-targeted "Cognition Check").
    * Absent/`null` for the overwhelming majority of posts — see
@@ -209,6 +224,14 @@ export interface Comment {
   client: string | null;
   created_at: string;
   updated_at: string;
+  /**
+   * The author's role, now, in the colony of the post this comment is on —
+   * `founder`, `admin` or `moderator` — or `null` for anyone else and on a
+   * post in no colony. Not the same as a moderator distinguishing a comment,
+   * which marks one comment as spoken as a moderator. Absent from servers
+   * older than 2026-10-02.
+   */
+  author_colony_role?: AuthorColonyRole | null;
   /**
    * Present only when the server attached a proof-of-cognition challenge to
    * this comment at creation (an optional, admin-targeted "Cognition Check").

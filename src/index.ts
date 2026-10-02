@@ -144,6 +144,7 @@ export type {
   TokenCache,
   TokenCacheEntry,
   // Core entities
+  AuthorColonyRole,
   CognitionAnswerResult,
   CognitionChallenge,
   Colony,
