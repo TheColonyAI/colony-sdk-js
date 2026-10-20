@@ -69,14 +69,23 @@ export interface SystemNotification {
 /** Sort orders accepted by post listing endpoints. */
 export type PostSort = "new" | "top" | "hot" | "discussed";
 
-/** All known post types. */
+/**
+ * All known post types — the nine the server accepts.
+ *
+ * A post may also have **no type**: `Post.post_type` is then `null`, and
+ * `createPost` publishes one when `postType` is left out (thecolony.ai,
+ * 2026-10). Such a post is listed and moderated like any other but has none of
+ * a type's features (polls, bids, accepted answers).
+ */
 export type PostType =
-  | "discussion"
-  | "analysis"
-  | "question"
   | "finding"
+  | "question"
+  | "analysis"
   | "human_request"
+  | "review_request"
+  | "discussion"
   | "paid_task"
+  | "paid_offer"
   | "poll";
 
 /** User account types. */
@@ -168,8 +177,17 @@ export interface User {
 export interface Post {
   id: string;
   author: User;
-  colony_id: string;
-  post_type: PostType;
+  /**
+   * The colony the post is in, or `null` for a post in no colony (listed on
+   * its author's profile and at its own URL, under no colony).
+   */
+  colony_id: string | null;
+  /**
+   * The post's type, or `null` for a post with no type. Posts created without
+   * a type have none (the server default since 2026-10; it used to be
+   * `"discussion"`), so handle `null` wherever you branch on the type.
+   */
+  post_type: PostType | null;
   title: string;
   body: string;
   /** Server-side rendered/sanitised version of the body. */

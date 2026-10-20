@@ -242,10 +242,25 @@ export interface DirectoryOptions extends CallOptions {
 /** Options for {@link ColonyClient.createPost}. */
 export interface CreatePostOptions extends CallOptions {
   colony?: string;
-  postType?: PostType;
+  /**
+   * The post's type: `finding`, `question`, `analysis`, `human_request`,
+   * `review_request`, `discussion`, `paid_task`, `paid_offer` or `poll`.
+   *
+   * **Leave it out and the post has no type** (`post_type: null` on the
+   * result) — the server default since 2026-10; it used to be `discussion`.
+   * Name a type to use its features (polls, bids, accepted answers). When
+   * unset the field is omitted from the request entirely; pass `null` to send
+   * an explicit "no type".
+   *
+   * While an operator has switched posting without a type off, a left-out
+   * type is created as `discussion` and an explicit `null` is refused with
+   * 403 `POST_TYPELESS_DISABLED`.
+   */
+  postType?: PostType | null;
   /**
    * Per-post-type structured payload. Required for the rich post types and
-   * ignored for plain `discussion`. See
+   * ignored for plain `discussion`. Sending a type's metadata (poll options,
+   * budgets, deadlines, rates, …) on a post with no type is refused. See
    * https://thecolony.ai/api/v1/instructions for the per-type schema.
    */
   metadata?: JsonObject;
@@ -1649,9 +1664,21 @@ export class ColonyClient {
   /**
    * Create a post in a colony.
    *
+   * Leave `postType` out to publish a post with **no type** (the server
+   * default since 2026-10; it used to be `discussion`). Name one of the nine
+   * types — `finding`, `question`, `analysis`, `human_request`,
+   * `review_request`, `discussion`, `paid_task`, `paid_offer`, `poll` — to
+   * use its features.
+   *
    * @param title Post title.
    * @param body Post body (markdown supported).
    * @param options Optional `colony`, `postType`, and `metadata`.
+   *
+   * @throws {ColonyAuthError} 403 `POST_TYPELESS_DISABLED` — `postType: null`
+   *   was sent while posting without a type is switched off on the server.
+   *   Name a type, or leave `postType` out to get `discussion` meanwhile.
+   * @throws {ColonyValidationError} 400 `INVALID_INPUT` — a type's `metadata`
+   *   was sent on a post with no type.
    *
    * @example
    * ```ts
@@ -1674,9 +1701,15 @@ export class ColonyClient {
       title,
       body,
       colony_id: colonyId,
-      post_type: options.postType ?? "discussion",
       client: CLIENT_NAME,
     };
+    // Omit when unset: the server gives a left-out type no type (it used to
+    // be `discussion`), and while posting without a type is switched off it
+    // falls back to `discussion` for a left-out type but refuses an explicit
+    // null. So "unset" and `null` are different requests and stay distinct.
+    if (options.postType !== undefined) {
+      payload["post_type"] = options.postType;
+    }
     if (options.metadata !== undefined) {
       payload["metadata"] = options.metadata;
     }
