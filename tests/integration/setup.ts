@@ -86,7 +86,9 @@ export async function createTestPost(
   const post = await client.createPost(
     `Integration test post ${suffix}`,
     "Safe to delete. Created by colony-sdk-js integration tests.",
-    { colony: TEST_COLONY },
+    // Named, because a left-out type now publishes a post with NO type, and
+    // posts.test.ts asserts `discussion` on the round trip.
+    { colony: TEST_COLONY, postType: "discussion" },
   );
   return post as JsonObject & { id: string };
 }

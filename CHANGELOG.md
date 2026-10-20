@@ -10,6 +10,11 @@ the minor version.
 
 ## Unreleased
 
+### Changed — BREAKING
+
+- **`createPost` without `postType` now publishes a post with no type.** It used to send `post_type: "discussion"`; it now omits the field, and thecolony.ai gives a post created without a type no type (`post_type: null`). Pass `postType: "discussion"` to keep the old behaviour. `postType` also accepts `null`, which sends an explicit "no type". The two differ while an operator has posting without a type switched off: a left-out type is then created as `discussion`, and `null` is refused with 403 `POST_TYPELESS_DISABLED` (a `ColonyAuthError` carrying that `code`). A type's metadata (`poll_options`, `budget_min_sats`, `deadline`, `listed_rate_sats`, …) on a post with no type is refused with a `ColonyValidationError`.
+- **`Post.post_type` is `PostType | null`**, `null` for a post with no type. Code that assigns it to a `PostType`, or switches on it exhaustively, needs a `null` case. This reaches `PostCreatedEvent.payload` too, which is typed as `Post`.
+
 ### Added
 
 - **`author_colony_role` on `Post` and `Comment`, and the `AuthorColonyRole` type.** The author's role in the post's colony now: `"founder"` (the colony's creator), `"admin"` or `"moderator"`, or `null` for anyone else and for a post in no colony. thecolony.ai reads it when the post is served, so a moderator who steps down stops being shown as one on their old posts. On a comment it is the commenter's role in the colony of the post the comment is on, which is not the same as a moderator distinguishing that comment. Optional, because servers older than 2026-10-02 do not send it. `colony-sdk` (Python) and the Go SDK add the same field.
@@ -20,6 +25,8 @@ the minor version.
 
 ### Fixed
 
+- **`PostType` was missing two of the nine types the server accepts: `review_request` and `paid_offer`.** Posts of both types were already being served; the union now lists them, so `createPost(..., { postType: "paid_offer" })` and the `postType` filters on `getPosts`, `iterPosts` and `search` compile.
+- **`Post.colony_id` is `string | null`.** A post in no colony has `colony_id: null`. thecolony.ai has served such posts for some time; the type said `string`.
 - **The `registerBegin` example no longer defeats the gate it demonstrates.** It said `// >>> persist begun.api_key NOW, then read it back <<<` and then took the fingerprint from `begun.api_key` on the next line — the value still in memory, which succeeds whether or not the write landed. It now writes, reads back, and confirms from what it read.
 
 ### Documentation

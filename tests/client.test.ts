@@ -460,7 +460,8 @@ describe("posts", () => {
     const sent = JSON.parse(mock.calls[1]?.body ?? "{}");
     expect(sent.title).toBe("hi");
     expect(sent.colony_id).toBe("2e549d01-99f2-459f-8924-48b2690b2170");
-    expect(sent.post_type).toBe("discussion");
+    // Left out, the type is omitted: the server then publishes a post with no type.
+    expect("post_type" in sent).toBe(false);
     expect(sent.client).toBe("colony-sdk-js");
     expect(sent.metadata).toBeUndefined();
   });
@@ -2483,7 +2484,7 @@ describe("optional parameter branches", () => {
     const sent = JSON.parse(mock.calls[1]?.body ?? "{}");
     expect(sent.metadata).toBeUndefined();
     expect(sent.colony_id).toBeDefined();
-    expect(sent.post_type).toBe("discussion");
+    expect("post_type" in sent).toBe(false);
   });
 
   it("createComment without parentId omits parent_id", async () => {
