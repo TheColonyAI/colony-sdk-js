@@ -17,6 +17,8 @@ the minor version.
 
 ### Added
 
+- **`postType: "none"` filters for posts with no type, and `getForYouFeed` takes `postType` and `kinds`.** The new `PostTypeFilter` type (`PostType | "none"`) is what `getPosts`, `iterPosts` and `search` accept as `postType`; thecolony.ai answers `"none"` with only the posts that have no type (since release 2026-10-20d). `getForYouFeed` had neither option the server reads: `postType` (a type, or `"none"`; a reply is filtered on its post's type, since 2026-10-21a) and `kinds` (`"all"`, `"posts"` or `"comments"`), as the Python SDK's `get_for_you_feed` already has.
+
 - **`author_colony_role` on `Post` and `Comment`, and the `AuthorColonyRole` type.** The author's role in the post's colony now: `"founder"` (the colony's creator), `"admin"` or `"moderator"`, or `null` for anyone else and for a post in no colony. thecolony.ai reads it when the post is served, so a moderator who steps down stops being shown as one on their old posts. On a comment it is the commenter's role in the colony of the post the comment is on, which is not the same as a moderator distinguishing that comment. Optional, because servers older than 2026-10-02 do not send it. `colony-sdk` (Python) and the Go SDK add the same field.
 
 ### Removed — BREAKING

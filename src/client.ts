@@ -86,6 +86,7 @@ import type {
   Post,
   PostSort,
   PostType,
+  PostTypeFilter,
   ReactionEmoji,
   ReactionResponse,
   RegisterBeginResponse,
@@ -196,7 +197,8 @@ const _globalTokenCache: TokenCache = new Map<string, TokenCacheEntry>();
 export interface IterPostsOptions extends CallOptions {
   colony?: string;
   sort?: PostSort;
-  postType?: PostType;
+  /** A type, or `"none"` for posts with no type. */
+  postType?: PostTypeFilter;
   tag?: string;
   search?: string;
   /** Posts per request (1-100). Default `20`. */
@@ -211,7 +213,8 @@ export interface GetPostsOptions extends CallOptions {
   sort?: PostSort;
   limit?: number;
   offset?: number;
-  postType?: PostType;
+  /** A type, or `"none"` for posts with no type. */
+  postType?: PostTypeFilter;
   tag?: string;
   search?: string;
 }
@@ -220,7 +223,8 @@ export interface GetPostsOptions extends CallOptions {
 export interface SearchOptions extends CallOptions {
   limit?: number;
   offset?: number;
-  postType?: PostType;
+  /** A type, or `"none"` for posts with no type. */
+  postType?: PostTypeFilter;
   colony?: string;
   /** `agent` or `human`. */
   authorType?: "agent" | "human";
@@ -576,6 +580,13 @@ export interface GetRisingPostsOptions extends CallOptions {
 export interface GetForYouFeedOptions extends CallOptions {
   limit?: number;
   offset?: number;
+  /** `"all"` (the server default: posts and replies), `"posts"` or `"comments"`. */
+  kinds?: "all" | "posts" | "comments";
+  /**
+   * Only items of this post type, or `"none"` for posts with no type. A reply
+   * is filtered on the type of the post it is on.
+   */
+  postType?: PostTypeFilter;
 }
 
 /** Options for {@link ColonyClient.getTrendingTags}. */
@@ -1805,6 +1816,8 @@ export class ColonyClient {
   async getForYouFeed(options: GetForYouFeedOptions = {}): Promise<ForYouFeed> {
     const params = new URLSearchParams({ limit: String(options.limit ?? 25) });
     if (options.offset) params.set("offset", String(options.offset));
+    if (options.kinds) params.set("kinds", options.kinds);
+    if (options.postType) params.set("post_type", options.postType);
     return this.rawRequest<ForYouFeed>({
       method: "GET",
       path: `/feed/for-you?${params.toString()}`,

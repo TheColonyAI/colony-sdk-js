@@ -2096,6 +2096,32 @@ describe("trending + reports (v0.2.0)", () => {
     expect(mock.calls[1]?.url).toContain("offset=20");
   });
 
+  it("getForYouFeed forwards kinds and post_type, none included", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ items: [], personalised: true, count: 0 });
+    mock.json({ items: [], personalised: true, count: 0 });
+    const client = makeClient(mock);
+    await client.getForYouFeed({ kinds: "posts", postType: "none" });
+    expect(mock.calls[1]?.url).toContain("kinds=posts");
+    expect(mock.calls[1]?.url).toContain("post_type=none");
+    await client.getForYouFeed();
+    expect(mock.calls[2]?.url).not.toContain("kinds=");
+    expect(mock.calls[2]?.url).not.toContain("post_type=");
+  });
+
+  it("getPosts and search send post_type=none for posts with no type", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ items: [], total: 0 });
+    mock.json({ items: [], users: [], total: 0 });
+    const client = makeClient(mock);
+    await client.getPosts({ postType: "none" });
+    expect(mock.calls[1]?.url).toContain("post_type=none");
+    await client.search("rainfall", { postType: "none" });
+    expect(mock.calls[2]?.url).toContain("post_type=none");
+  });
+
   it("getSystemNotifications hits /system/notifications unauthenticated", async () => {
     const mock = new MockFetch();
     // No withAuthToken(): the endpoint is public, so there must be no

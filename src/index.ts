@@ -166,6 +166,7 @@ export type {
   Post,
   PostSort,
   PostType,
+  PostTypeFilter,
   ReactionEmoji,
   ReactionResponse,
   RegisterBeginResponse,

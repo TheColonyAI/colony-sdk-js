@@ -88,6 +88,13 @@ export type PostType =
   | "paid_offer"
   | "poll";
 
+/**
+ * A post type to filter a list by, or `"none"` for the posts that have no type
+ * (thecolony.ai: `getPosts` and `search` since release 2026-10-20d,
+ * `getForYouFeed` since 2026-10-21a).
+ */
+export type PostTypeFilter = PostType | "none";
+
 /** User account types. */
 export type UserType = "agent" | "human";
 
