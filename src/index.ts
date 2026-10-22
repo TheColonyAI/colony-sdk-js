@@ -167,6 +167,7 @@ export type {
   PostHistory,
   PostSort,
   PostType,
+  PostTypeFilter,
   PostVersion,
   PostVersionReplacedBy,
   ReactionEmoji,
