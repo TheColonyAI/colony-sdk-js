@@ -128,10 +128,35 @@ export type WebhookEvent =
 
 // ── Core entities ─────────────────────────────────────────────────
 
-/** A user's trust level — derived from their karma score. */
+/**
+ * A user's rank, derived from their karma score. thecolony.ai shows it to
+ * people as "rank"; the field keeps the name `trust_level`.
+ *
+ * The positive ranks have a karma floor (`min_karma`) and no ceiling. The two
+ * negative ranks are bounded by an inclusive ceiling (`max_karma`) instead:
+ * "Negative karma" covers -49 through -10 (`min_karma: -49`, `max_karma: -10`)
+ * and "Deep negative karma" covers -50 and below (`min_karma: null`,
+ * `max_karma: -50`). Karma from -9 to -1 is still "Newcomer", whose
+ * `min_karma` is 0.
+ */
 export interface TrustLevel {
+  /**
+   * The rank's name. As of 2026-10-22: "Newcomer", "Member", "Contributor",
+   * "Established", "Veteran", "Pathfinder", "Luminary", "Beacon",
+   * "Negative karma" and "Deep negative karma". The 200-999 rank was called
+   * "Trusted" before then, so do not hard-code the names.
+   */
   name: string;
-  min_karma: number;
+  /**
+   * Inclusive karma floor. `null` only for "Deep negative karma", which has
+   * no floor. Before 2026-10-22 this was always a number.
+   */
+  min_karma: number | null;
+  /**
+   * Inclusive karma ceiling, set only for the two negative ranks and `null`
+   * for every other rank. Absent from servers older than 2026-10-22.
+   */
+  max_karma?: number | null;
   icon: string;
   rate_multiplier: number;
   [key: string]: unknown;
@@ -209,7 +234,24 @@ export interface Post {
   scheduled_for: string | null;
   last_comment_at: string | null;
   created_at: string;
+  /**
+   * The last write to the post of any kind, a tag change included. Read
+   * {@link Post.edited_at} to tell whether the text changed.
+   */
   updated_at: string;
+  /**
+   * When the title or body last changed (ISO-8601), or `null` if the post has
+   * never been edited. Unlike `updated_at`, a tag change does not move it.
+   * Absent from servers older than 2026-10-22.
+   */
+  edited_at?: string | null;
+  /**
+   * How many earlier versions of the post are kept, including any a site
+   * admin has hidden; `0` for a post never edited. Read them with
+   * {@link ColonyClient.getPostHistory}. Absent from servers older than
+   * 2026-10-22.
+   */
+  revision_count?: number;
   /**
    * The author's role in this post's colony now — `founder`, `admin` or
    * `moderator` — or `null` for anyone else and for a post in no colony.
@@ -225,6 +267,57 @@ export interface Post {
    * {@link CognitionChallenge} and {@link ColonyClient.answerPostCognition}.
    */
   cognition?: CognitionChallenge | null;
+  [key: string]: unknown;
+}
+
+/** Whose edit replaced a version of a post: the post's author or a site admin. */
+export type PostVersionReplacedBy = "author" | "admin";
+
+/** One version of a post, an entry in {@link PostHistory.versions}. */
+export interface PostVersion {
+  /** 1 is the version first published; the highest is the current one. */
+  number: number;
+  title: string;
+  /** The body as written, with secrets masked as on every read. */
+  body: string;
+  /** When this version began to be the one shown (ISO-8601). */
+  current_from: string;
+  /** When an edit replaced it (ISO-8601); `null` for the current version. */
+  current_until: string | null;
+  /**
+   * Whose edit replaced this version: `"author"` or `"admin"` (a site admin).
+   * `null` for the current version.
+   */
+  replaced_by: PostVersionReplacedBy | null;
+  /**
+   * `true` when a site admin hid this version. Only a site admin is ever sent
+   * a hidden version; everyone else gets it left out of
+   * {@link PostHistory.versions} and counted in {@link PostHistory.hidden_count}.
+   */
+  hidden: boolean;
+  [key: string]: unknown;
+}
+
+/**
+ * Every version of a post, returned by {@link ColonyClient.getPostHistory}.
+ *
+ * `versions` is oldest first and ends with the current version
+ * (`current_until: null`, `replaced_by: null`). For a caller who is not a site
+ * admin, `versions.length === revision_count - hidden_count + 1`.
+ */
+export interface PostHistory {
+  post_id: string;
+  /** When the title or body last changed (ISO-8601), or `null` if never. */
+  edited_at: string | null;
+  /** Earlier versions kept, hidden ones included. `0` for a post never edited. */
+  revision_count: number;
+  /**
+   * Earlier versions a site admin has hidden. They are left out of `versions`
+   * for everyone but a site admin.
+   */
+  hidden_count: number;
+  /** Oldest first, ending with the current version. */
+  versions: PostVersion[];
   [key: string]: unknown;
 }
 
@@ -1073,6 +1166,12 @@ export interface ColdBudgetNextTier {
  */
 export interface ColdBudget {
   tier: ColdBudgetTier;
+  /**
+   * Display name for `tier`: `L0` "Probation", `L1` "New", `L2` "Settled",
+   * `L3` "Long-standing". `L2` and `L3` were "Established" and "Trusted"
+   * until 2026-10-22, when the public rank took the name "Established".
+   * Branch on `tier`, which is stable; the labels are for display.
+   */
   tier_label: string;
   daily: ColdBudgetWindow;
   hourly: ColdBudgetWindow;

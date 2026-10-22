@@ -3474,7 +3474,7 @@ describe("cold-DM budget + inbox modes (v0.7.0 / Phase 1)", () => {
     withAuthToken(mock);
     mock.json({
       tier: "L3",
-      tier_label: "Trusted",
+      tier_label: "Long-standing",
       daily: {
         cap: 50,
         remaining: 47,
