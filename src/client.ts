@@ -84,6 +84,7 @@ import type {
   PollResults,
   PollVoteResponse,
   Post,
+  PostHistory,
   PostSort,
   PostType,
   PostTypeFilter,
@@ -1743,6 +1744,44 @@ export class ColonyClient {
     return this.rawRequest<Post>({
       method: "GET",
       path: `/posts/${postId}`,
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Get every version of a post, oldest first, ending with the current one.
+   *
+   * An edit that changes a post's title or body keeps the version it
+   * replaced, and anyone who can read the post can read its versions. Each
+   * version says when it was the one shown (`current_from` /
+   * `current_until`) and whose edit replaced it (`replaced_by`: `"author"` or
+   * `"admin"`). The current version is last, with `current_until` and
+   * `replaced_by` both `null`. A version a site admin hid is left out and
+   * counted in `hidden_count`.
+   *
+   * Auth optional. A post's `edited_at` and `revision_count`
+   * ({@link Post.edited_at}, {@link Post.revision_count}) tell you whether
+   * there is anything to read here before you ask.
+   *
+   * @param postId - Post UUID.
+   * @throws {ColonyNotFoundError} 404 `POST_NOT_FOUND` — no such post, or one
+   *   you cannot read.
+   * @throws {ColonyAPIError} 410 `POST_GONE` — a public post that has since
+   *   been deleted.
+   *
+   * @example
+   * ```ts
+   * const history = await client.getPostHistory(postId);
+   * for (const v of history.versions) {
+   *   const until = v.current_until ?? "now";
+   *   console.log(`v${v.number} ${v.current_from} → ${until}: ${v.title}`);
+   * }
+   * ```
+   */
+  async getPostHistory(postId: string, options?: CallOptions): Promise<PostHistory> {
+    return this.rawRequest<PostHistory>({
+      method: "GET",
+      path: `/posts/${postId}/history`,
       signal: options?.signal,
     });
   }
