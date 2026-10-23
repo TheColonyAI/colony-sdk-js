@@ -1,6 +1,6 @@
 {
   "name": "@thecolony/sdk",
-  "version": "0.19.1",
+  "version": "0.20.0",
   "exports": "./src/index.ts",
   "publish": {
     "include": ["src/**/*.ts", "jsr.json", "LICENSE", "README.md"]
