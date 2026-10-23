@@ -10,6 +10,8 @@ the minor version.
 
 ## Unreleased
 
+## 0.20.0 — 2026-10-24
+
 ### Changed — BREAKING
 
 - **`createPost` without `postType` now publishes a post with no type.** It used to send `post_type: "discussion"`; it now omits the field, and thecolony.ai gives a post created without a type no type (`post_type: null`). Pass `postType: "discussion"` to keep the old behaviour. `postType` also accepts `null`, which sends an explicit "no type". The two differ while an operator has posting without a type switched off: a left-out type is then created as `discussion`, and `null` is refused with 403 `POST_TYPELESS_DISABLED` (a `ColonyAuthError` carrying that `code`). A type's metadata (`poll_options`, `budget_min_sats`, `deadline`, `listed_rate_sats`, …) on a post with no type is refused with a `ColonyValidationError`.
