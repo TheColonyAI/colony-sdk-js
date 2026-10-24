@@ -226,19 +226,156 @@ describe("verb and path", () => {
     });
   }
 
-  it("percent-encodes the slug, file id and user so none can escape its segment", async () => {
+  it("percent-encodes the slug and user so neither can escape its segment", async () => {
     const mock = withAuthToken(new MockFetch());
     mock.json({});
     mock.json({});
     const client = makeClient(mock);
-    await client.getProjectFile("../admin", "x/y");
+    await client.getProjectFile("../admin", FILE_ID);
     await client.transferProject("orbit-toy", "a/b");
 
     expect(new URL(requestAt(mock, 1).url ?? "").pathname).toBe(
-      "/api/v1/projects/..%2Fadmin/files/x%2Fy",
+      `/api/v1/projects/..%2Fadmin/files/${FILE_ID}`,
     );
     expect(new URL(requestAt(mock, 2).url ?? "").pathname).toBe(
       "/api/v1/projects/orbit-toy/transfer/a%2Fb",
+    );
+  });
+});
+
+describe("path segments refused before any request", () => {
+  /**
+   * `encodeURIComponent` leaves `.` and `..` alone, and `new URL()` / `fetch`
+   * resolve them: before this guard `deleteProject("..")` sent an
+   * authenticated DELETE to `/api/v1/`. Each refusal below must happen with
+   * NO fetch at all, not even the token exchange, which `mock.calls` proves:
+   * MockFetch has no handler queued, so any call would also change the error.
+   */
+  async function refusedLocally(
+    call: (c: ColonyClient) => Promise<unknown>,
+    errorClass: typeof TypeError | typeof RangeError = RangeError,
+  ): Promise<void> {
+    const mock = new MockFetch();
+    await expect(call(makeClient(mock))).rejects.toThrow(errorClass);
+    expect(mock.calls).toHaveLength(0);
+  }
+
+  /** Every method that puts a slug in the path. */
+  const bySlug: Array<[string, (c: ColonyClient, slug: string) => Promise<unknown>]> = [
+    ["getProject", (c, s) => c.getProject(s)],
+    ["updateProject", (c, s) => c.updateProject(s, { name: "x" })],
+    ["deleteProject", (c, s) => c.deleteProject(s)],
+    ["removeProjectFromColony", (c, s) => c.removeProjectFromColony(s)],
+    ["getProjectFile", (c, s) => c.getProjectFile(s, FILE_ID)],
+    ["addProjectFile", (c, s) => c.addProjectFile(s, "notes.md")],
+    ["updateProjectFile", (c, s) => c.updateProjectFile(s, FILE_ID, "x")],
+    ["deleteProjectFile", (c, s) => c.deleteProjectFile(s, FILE_ID)],
+    ["listProjectFileVersions", (c, s) => c.listProjectFileVersions(s, FILE_ID)],
+    ["getProjectFileVersion", (c, s) => c.getProjectFileVersion(s, FILE_ID, 1)],
+    ["restoreProjectFileVersion", (c, s) => c.restoreProjectFileVersion(s, FILE_ID, 1)],
+    ["addProjectCollaborator", (c, s) => c.addProjectCollaborator(s, "helper")],
+    ["removeProjectCollaborator", (c, s) => c.removeProjectCollaborator(s, "helper")],
+    ["transferProject", (c, s) => c.transferProject(s, "helper")],
+  ];
+
+  it("covers every method with a slug in its path", () => {
+    expect(bySlug.length).toBe(14);
+  });
+
+  for (const [label, call] of bySlug) {
+    for (const slug of ["..", ".", ""]) {
+      it(`${label} refuses the slug ${JSON.stringify(slug)}`, async () => {
+        await refusedLocally((c) => call(c, slug));
+      });
+    }
+  }
+
+  it("deleteProject('..') no longer reaches DELETE /api/v1/", async () => {
+    // The concrete case from the review, stated on its own.
+    const mock = new MockFetch();
+    await expect(makeClient(mock).deleteProject("..")).rejects.toThrow(/path segment/);
+    expect(mock.calls).toHaveLength(0);
+  });
+
+  const byUser: Array<[string, (c: ColonyClient, user: string) => Promise<unknown>]> = [
+    ["addProjectCollaborator", (c, u) => c.addProjectCollaborator("orbit-toy", u)],
+    ["removeProjectCollaborator", (c, u) => c.removeProjectCollaborator("orbit-toy", u)],
+    ["transferProject", (c, u) => c.transferProject("orbit-toy", u)],
+  ];
+
+  for (const [label, call] of byUser) {
+    for (const user of ["..", ".", ""]) {
+      it(`${label} refuses the user ${JSON.stringify(user)}`, async () => {
+        await refusedLocally((c) => call(c, user));
+      });
+    }
+  }
+
+  const byFileId: Array<[string, (c: ColonyClient, fileId: string) => Promise<unknown>]> = [
+    ["getProjectFile", (c, f) => c.getProjectFile("orbit-toy", f)],
+    ["updateProjectFile", (c, f) => c.updateProjectFile("orbit-toy", f, "x")],
+    ["deleteProjectFile", (c, f) => c.deleteProjectFile("orbit-toy", f)],
+    ["listProjectFileVersions", (c, f) => c.listProjectFileVersions("orbit-toy", f)],
+    ["getProjectFileVersion", (c, f) => c.getProjectFileVersion("orbit-toy", f, 1)],
+    ["restoreProjectFileVersion", (c, f) => c.restoreProjectFileVersion("orbit-toy", f, 1)],
+  ];
+
+  for (const [label, call] of byFileId) {
+    for (const fileId of ["../../users/x", "..", ".", "", "index.html", `${FILE_ID}/..`]) {
+      it(`${label} refuses the non-UUID fileId ${JSON.stringify(fileId)}`, async () => {
+        await refusedLocally((c) => call(c, fileId));
+      });
+    }
+  }
+
+  const byVersion: Array<[string, (c: ColonyClient, n: number) => Promise<unknown>]> = [
+    ["getProjectFileVersion", (c, n) => c.getProjectFileVersion("orbit-toy", FILE_ID, n)],
+    ["restoreProjectFileVersion", (c, n) => c.restoreProjectFileVersion("orbit-toy", FILE_ID, n)],
+  ];
+
+  for (const [label, call] of byVersion) {
+    for (const n of [0, -1, 1.5, NaN, Infinity, 2 ** 53]) {
+      it(`${label} refuses the versionNumber ${String(n)}`, async () => {
+        await refusedLocally((c) => call(c, n));
+      });
+    }
+    it(`${label} refuses a versionNumber that is a string at runtime`, async () => {
+      // The type says number; a caller crossing from untyped code can still
+      // pass a string, and `"../.."` would have been interpolated raw.
+      await refusedLocally((c) => call(c, "../.." as unknown as number), TypeError);
+    });
+  }
+
+  it("a slug or user that is not a string is a TypeError", async () => {
+    await refusedLocally((c) => c.getProject(undefined as unknown as string), TypeError);
+    await refusedLocally((c) => c.transferProject("orbit-toy", 42 as unknown as string), TypeError);
+  });
+
+  it("values that only contain dots are still sent, encoded", async () => {
+    // A control: the guard refuses the dot SEGMENTS, not every dot. These
+    // stay one segment each, so they must reach the server unchanged.
+    const mock = withAuthToken(new MockFetch());
+    mock.json({});
+    mock.json({});
+    mock.json({});
+    const client = makeClient(mock);
+    await client.getProject("...");
+    await client.getProject("a.b");
+    await client.getProject("%2e%2e");
+
+    expect(new URL(requestAt(mock, 1).url ?? "").pathname).toBe("/api/v1/projects/...");
+    expect(new URL(requestAt(mock, 2).url ?? "").pathname).toBe("/api/v1/projects/a.b");
+    // The `%` is escaped, so this cannot be read as an encoded `..`.
+    expect(new URL(requestAt(mock, 3).url ?? "").pathname).toBe("/api/v1/projects/%252e%252e");
+  });
+
+  it("an upper-case UUID fileId and version 1 are accepted", async () => {
+    const mock = withAuthToken(new MockFetch());
+    mock.json({});
+    await makeClient(mock).getProjectFileVersion("orbit-toy", FILE_ID.toUpperCase(), 1);
+
+    expect(new URL(requestAt(mock, 1).url ?? "").pathname).toBe(
+      `/api/v1/projects/orbit-toy/files/${FILE_ID.toUpperCase()}/versions/1`,
     );
   });
 });

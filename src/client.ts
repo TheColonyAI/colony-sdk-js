@@ -764,6 +764,67 @@ function oauthRoot(baseUrl: string): string {
 }
 
 /**
+ * A caller's value as ONE path segment of a request URL, refusing the values
+ * that would make the authenticated request reach a different endpoint.
+ *
+ * `encodeURIComponent` escapes `/`, `?` and `#` but leaves dots alone, and
+ * `new URL()` and `fetch` resolve the dot segments `.` and `..`. So a slug of
+ * `..` would make `deleteProject("..")` send `DELETE /api/v1/`, and a `.`
+ * drops the segment. An empty value addresses the parent collection instead. All three
+ * are refused here, before any request. Anything else is encoded and sent: a
+ * `%2e%2e` cannot become a dot segment, because its `%` is escaped too.
+ */
+function pathSegment(value: unknown, name: string): string {
+  if (typeof value !== "string") {
+    throw new TypeError(`${name} must be a string, got ${typeof value}.`);
+  }
+  if (value === "" || value === "." || value === "..") {
+    throw new RangeError(
+      `${name} ${JSON.stringify(value)} cannot be sent as a path segment: ` +
+        "`.` and `..` are resolved by the URL parser into a different endpoint, " +
+        "and an empty value addresses the parent collection. Refused before any request.",
+    );
+  }
+  return encodeURIComponent(value);
+}
+
+/**
+ * A project file's id as a path segment. File ids are always UUIDs (the
+ * route declares `file_id: uuid.UUID`), so anything else is a caller's
+ * mistake, and refusing it locally also closes the dot-segment route.
+ */
+function fileIdSegment(value: unknown): string {
+  if (typeof value !== "string") {
+    throw new TypeError(`fileId must be a string, got ${typeof value}.`);
+  }
+  if (!isUuidShaped(value)) {
+    throw new RangeError(
+      `fileId ${JSON.stringify(value)} is not a UUID. A project file's id is the ` +
+        "`id` of an entry in `Project.files`. Refused before any request.",
+    );
+  }
+  return value;
+}
+
+/**
+ * A file version's number as a path segment: a safe integer of at least 1,
+ * checked at runtime because a TypeScript `number` type does not stop a
+ * caller passing `"../.."`, `NaN` or `1.5`.
+ */
+function versionNumberSegment(value: unknown): string {
+  if (typeof value !== "number") {
+    throw new TypeError(`versionNumber must be a number, got ${typeof value}.`);
+  }
+  if (!Number.isSafeInteger(value) || value < 1) {
+    throw new RangeError(
+      `versionNumber must be an integer of at least 1, got ${String(value)}. ` +
+        "Refused before any request.",
+    );
+  }
+  return String(value);
+}
+
+/**
  * Reject a `subjectToken` that is obviously not a JWT, before it fails remotely.
  *
  * {@link ColonyClient.exchangeToken} trades a **JWT** for an OIDC identity. The
@@ -6048,6 +6109,12 @@ export class ColonyClient {
   // versions by their `number`, and the collaborator and transfer verbs take a
   // username or a user ID.
   //
+  // Each of those is checked locally before any request, because `.` and `..`
+  // survive `encodeURIComponent` and the URL parser resolves them into another
+  // endpoint. A slug or user of `""`, `.` or `..`, a `fileId` that is not a
+  // UUID, or a `versionNumber` that is not an integer of at least 1 throws a
+  // `RangeError` (a value of the wrong type, a `TypeError`), and nothing is sent.
+  //
   // A new project is a draft with three starter files (`index.html`,
   // `style.css`, `script.js`); `updateProject(slug, { isPublished: true })`
   // publishes it. A draft, or a project that is not served, is a 404 to anyone
@@ -6136,7 +6203,7 @@ export class ColonyClient {
   async getProject(slug: string, options?: CallOptions): Promise<Project> {
     return this.rawRequest<Project>({
       method: "GET",
-      path: `/projects/${encodeURIComponent(slug)}`,
+      path: `/projects/${pathSegment(slug, "slug")}`,
       signal: options?.signal,
     });
   }
@@ -6210,7 +6277,7 @@ export class ColonyClient {
     if (options.colony !== undefined) body["colony"] = options.colony;
     return this.rawRequest<Project>({
       method: "PATCH",
-      path: `/projects/${encodeURIComponent(slug)}`,
+      path: `/projects/${pathSegment(slug, "slug")}`,
       body,
       signal: options.signal,
     });
@@ -6228,7 +6295,7 @@ export class ColonyClient {
   async deleteProject(slug: string, options?: CallOptions): Promise<Record<string, never>> {
     return this.rawRequest<Record<string, never>>({
       method: "DELETE",
-      path: `/projects/${encodeURIComponent(slug)}`,
+      path: `/projects/${pathSegment(slug, "slug")}`,
       signal: options?.signal,
     });
   }
@@ -6245,7 +6312,7 @@ export class ColonyClient {
   async removeProjectFromColony(slug: string, options?: CallOptions): Promise<Project> {
     return this.rawRequest<Project>({
       method: "DELETE",
-      path: `/projects/${encodeURIComponent(slug)}/colony`,
+      path: `/projects/${pathSegment(slug, "slug")}/colony`,
       signal: options?.signal,
     });
   }
@@ -6271,7 +6338,7 @@ export class ColonyClient {
   ): Promise<ProjectFileWithContent> {
     return this.rawRequest<ProjectFileWithContent>({
       method: "GET",
-      path: `/projects/${encodeURIComponent(slug)}/files/${encodeURIComponent(fileId)}`,
+      path: `/projects/${pathSegment(slug, "slug")}/files/${fileIdSegment(fileId)}`,
       signal: options?.signal,
     });
   }
@@ -6295,7 +6362,7 @@ export class ColonyClient {
   ): Promise<ProjectFile> {
     return this.rawRequest<ProjectFile>({
       method: "POST",
-      path: `/projects/${encodeURIComponent(slug)}/files`,
+      path: `/projects/${pathSegment(slug, "slug")}/files`,
       body: { filename },
       signal: options?.signal,
     });
@@ -6350,7 +6417,7 @@ export class ColonyClient {
   ): Promise<ProjectFile> {
     return this.rawRequest<ProjectFile>({
       method: "PUT",
-      path: `/projects/${encodeURIComponent(slug)}/files/${encodeURIComponent(fileId)}`,
+      path: `/projects/${pathSegment(slug, "slug")}/files/${fileIdSegment(fileId)}`,
       body: { content },
       signal: options.signal,
       extraHeaders: options.ifMatch !== undefined ? { "If-Match": options.ifMatch } : undefined,
@@ -6371,7 +6438,7 @@ export class ColonyClient {
   ): Promise<Record<string, never>> {
     return this.rawRequest<Record<string, never>>({
       method: "DELETE",
-      path: `/projects/${encodeURIComponent(slug)}/files/${encodeURIComponent(fileId)}`,
+      path: `/projects/${pathSegment(slug, "slug")}/files/${fileIdSegment(fileId)}`,
       signal: options?.signal,
     });
   }
@@ -6391,7 +6458,7 @@ export class ColonyClient {
   ): Promise<ProjectFileVersions> {
     return this.rawRequest<ProjectFileVersions>({
       method: "GET",
-      path: `/projects/${encodeURIComponent(slug)}/files/${encodeURIComponent(fileId)}/versions`,
+      path: `/projects/${pathSegment(slug, "slug")}/files/${fileIdSegment(fileId)}/versions`,
       signal: options?.signal,
     });
   }
@@ -6411,7 +6478,7 @@ export class ColonyClient {
   ): Promise<ProjectFileVersionWithContent> {
     return this.rawRequest<ProjectFileVersionWithContent>({
       method: "GET",
-      path: `/projects/${encodeURIComponent(slug)}/files/${encodeURIComponent(fileId)}/versions/${versionNumber}`,
+      path: `/projects/${pathSegment(slug, "slug")}/files/${fileIdSegment(fileId)}/versions/${versionNumberSegment(versionNumber)}`,
       signal: options?.signal,
     });
   }
@@ -6435,7 +6502,7 @@ export class ColonyClient {
   ): Promise<ProjectFile> {
     return this.rawRequest<ProjectFile>({
       method: "POST",
-      path: `/projects/${encodeURIComponent(slug)}/files/${encodeURIComponent(fileId)}/versions/${versionNumber}/restore`,
+      path: `/projects/${pathSegment(slug, "slug")}/files/${fileIdSegment(fileId)}/versions/${versionNumberSegment(versionNumber)}/restore`,
       signal: options.signal,
       extraHeaders: options.ifMatch !== undefined ? { "If-Match": options.ifMatch } : undefined,
     });
@@ -6461,7 +6528,7 @@ export class ColonyClient {
   ): Promise<Record<string, never>> {
     return this.rawRequest<Record<string, never>>({
       method: "POST",
-      path: `/projects/${encodeURIComponent(slug)}/collaborators/${encodeURIComponent(user)}`,
+      path: `/projects/${pathSegment(slug, "slug")}/collaborators/${pathSegment(user, "user")}`,
       signal: options?.signal,
     });
   }
@@ -6480,7 +6547,7 @@ export class ColonyClient {
   ): Promise<Record<string, never>> {
     return this.rawRequest<Record<string, never>>({
       method: "DELETE",
-      path: `/projects/${encodeURIComponent(slug)}/collaborators/${encodeURIComponent(user)}`,
+      path: `/projects/${pathSegment(slug, "slug")}/collaborators/${pathSegment(user, "user")}`,
       signal: options?.signal,
     });
   }
@@ -6498,7 +6565,7 @@ export class ColonyClient {
   async transferProject(slug: string, user: string, options?: CallOptions): Promise<Project> {
     return this.rawRequest<Project>({
       method: "POST",
-      path: `/projects/${encodeURIComponent(slug)}/transfer/${encodeURIComponent(user)}`,
+      path: `/projects/${pathSegment(slug, "slug")}/transfer/${pathSegment(user, "user")}`,
       signal: options?.signal,
     });
   }
