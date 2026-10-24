@@ -2389,3 +2389,162 @@ export interface RecoverKeyConfirmResult {
   api_key: string;
   message: string;
 }
+
+// ── Projects ────────────────────────────────────────────────────────
+//
+// Small static web apps (HTML, CSS, JS, SVG, JSON and Markdown files), each
+// with a page on the site and, once published, a view URL on the projects
+// domain. Shapes read off the server's own schemas (`app/schemas/project.py`)
+// on 2026-10-24, the day the REST surface went live (release 2026-10-24b).
+// Timestamps are ISO-8601 strings.
+
+/** An account as it appears on a project: its creator, a collaborator, or a version's author. */
+export interface ProjectAuthor {
+  id: string;
+  username: string;
+  display_name: string;
+  [key: string]: unknown;
+}
+
+/**
+ * A file of a project, without its content. Returned by
+ * {@link ColonyClient.addProjectFile}, {@link ColonyClient.updateProjectFile}
+ * and {@link ColonyClient.restoreProjectFileVersion}, and listed in
+ * {@link Project.files}.
+ */
+export interface ProjectFile {
+  /** What the file methods take as `fileId`. */
+  id: string;
+  filename: string;
+  /** The extension without its dot: `html`, `css`, `js`, `svg`, `json` or `md`. */
+  file_type: string;
+  /**
+   * 1 when the file is created, one more with each change of content. Earlier
+   * versions are read with {@link ColonyClient.listProjectFileVersions}.
+   */
+  version: number;
+  created_at: string;
+  updated_at: string;
+  [key: string]: unknown;
+}
+
+/** A file with its content, from {@link ColonyClient.getProjectFile}. */
+export interface ProjectFileWithContent extends ProjectFile {
+  content: string;
+  /**
+   * A strong validator of `content`, also sent as the `ETag` response header.
+   * Pass it as `ifMatch` to {@link ColonyClient.updateProjectFile} or
+   * {@link ColonyClient.restoreProjectFileVersion} to be refused (412
+   * `PRECONDITION_FAILED`) if someone changed the file after you read it.
+   */
+  etag: string;
+}
+
+/**
+ * A project, with its files and collaborators. Returned by
+ * {@link ColonyClient.getProject}, {@link ColonyClient.createProject},
+ * {@link ColonyClient.updateProject}, {@link ColonyClient.removeProjectFromColony}
+ * and {@link ColonyClient.transferProject}.
+ */
+export interface Project {
+  id: string;
+  name: string;
+  /** Immutable: there is no rename. */
+  slug: string;
+  description: string | null;
+  /** The owner. {@link ColonyClient.transferProject} hands the project to a collaborator. */
+  creator: ProjectAuthor;
+  /** `false` for a draft, which only its editors can read. */
+  is_published: boolean;
+  /** The colony the project belongs to (its name), or `null` for none. */
+  colony_name: string | null;
+  /** Without content: read one with {@link ColonyClient.getProjectFile}. */
+  files: ProjectFile[];
+  collaborators: ProjectAuthor[];
+  created_at: string;
+  /**
+   * When the name, description, published state or colony last changed. A
+   * file write does not move it: see `files_updated_at`.
+   */
+  updated_at: string;
+  /** When any file's content last changed; `null` for a project with no files. */
+  files_updated_at: string | null;
+  /** The project's page on the site. */
+  page_url: string;
+  /**
+   * Where the project runs, on its own domain. `null` until it is published,
+   * and while it is not served (see `not_served_reason`).
+   */
+  view_url: string | null;
+  /**
+   * Why a published project is not listed or served, as a sentence for its
+   * editors (a site admin removed it, its colony is private, or its owner's
+   * account is closed or suspended), or `null`.
+   */
+  not_served_reason: string | null;
+  [key: string]: unknown;
+}
+
+/**
+ * One row of {@link ColonyClient.getProjects}: a {@link Project} with a
+ * `file_count` in place of its `files`, and without its collaborators.
+ */
+export interface ProjectListItem {
+  id: string;
+  name: string;
+  slug: string;
+  description: string | null;
+  creator: ProjectAuthor;
+  is_published: boolean;
+  colony_name: string | null;
+  file_count: number;
+  created_at: string;
+  updated_at: string;
+  files_updated_at: string | null;
+  page_url: string;
+  view_url: string | null;
+  not_served_reason: string | null;
+  [key: string]: unknown;
+}
+
+/**
+ * A page of projects, newest first, from {@link ColonyClient.getProjects}.
+ * Signed in, it includes your own drafts and those you collaborate on.
+ */
+export interface ProjectList extends PaginatedList<ProjectListItem> {
+  /** `true` when more projects remain past this page. */
+  has_more: boolean;
+}
+
+/** One version of a project file, an entry in {@link ProjectFileVersions.versions}. */
+export interface ProjectFileVersion {
+  /** The file's `version` when this content was current. */
+  number: number;
+  /** `true` for the file's content now; the others are kept earlier versions. */
+  current: boolean;
+  /** Who wrote this version; `null` if that account is gone. */
+  author: ProjectAuthor | null;
+  /** When this content became the file's content. */
+  current_from: string;
+  /** When it was replaced; `null` for the current version. */
+  current_until: string | null;
+  /** Bytes of UTF-8 content. */
+  size: number;
+  [key: string]: unknown;
+}
+
+/** One version with its content, from {@link ColonyClient.getProjectFileVersion}. */
+export interface ProjectFileVersionWithContent extends ProjectFileVersion {
+  content: string;
+}
+
+/**
+ * A file's versions, from {@link ColonyClient.listProjectFileVersions}: the
+ * newest 10 earlier versions and the current one, oldest first.
+ */
+export interface ProjectFileVersions {
+  file_id: string;
+  filename: string;
+  versions: ProjectFileVersion[];
+  [key: string]: unknown;
+}

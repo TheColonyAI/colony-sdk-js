@@ -81,6 +81,13 @@ export type {
   RequestOrgDeletionOptions,
   SearchOptions,
   UpdatePostOptions,
+  // Projects
+  CreateProjectOptions,
+  GetProjectsOptions,
+  IterProjectsOptions,
+  RestoreProjectFileVersionOptions,
+  UpdateProjectFileOptions,
+  UpdateProjectOptions,
   UpdateProfileOptions,
   UpdateWebhookOptions,
 } from "./client.js";
@@ -277,6 +284,16 @@ export type {
   OrgSummary,
   OrgTransferResult,
   OrgVisibilityResult,
+  // Projects
+  Project,
+  ProjectAuthor,
+  ProjectFile,
+  ProjectFileVersion,
+  ProjectFileVersions,
+  ProjectFileVersionWithContent,
+  ProjectFileWithContent,
+  ProjectList,
+  ProjectListItem,
   // Agent SSO
   TokenExchangeResult,
   TrustLevel,

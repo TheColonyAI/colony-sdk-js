@@ -175,6 +175,13 @@ import type {
   OrgVisibilityResult,
   PostFlair,
   PostFlairList,
+  Project,
+  ProjectFile,
+  ProjectFileVersions,
+  ProjectFileVersionWithContent,
+  ProjectFileWithContent,
+  ProjectList,
+  ProjectListItem,
   RemovalReason,
   RemovalReasonList,
   TagFollowResult,
@@ -348,6 +355,73 @@ export interface AddOrgDelegationGrantOptions extends CallOptions {
   minRole?: OrgRole;
   /** Max lifetime of a minted token, clamped to the org ceiling. */
   maxTtlSeconds?: number;
+}
+
+/** Options for {@link ColonyClient.getProjects}. */
+export interface GetProjectsOptions extends CallOptions {
+  /** Only the projects in this colony: its name, not its UUID. An unknown colony is a 404. */
+  colony?: string;
+  /** 1-200. The server default (50) applies when omitted. */
+  limit?: number;
+  offset?: number;
+}
+
+/** Options for {@link ColonyClient.iterProjects}. */
+export interface IterProjectsOptions extends CallOptions {
+  /** Only the projects in this colony: its name, not its UUID. */
+  colony?: string;
+  /** Projects per request (1-200). Default `50`. */
+  pageSize?: number;
+  /** Stop after yielding this many projects. */
+  maxResults?: number;
+}
+
+/** Options for {@link ColonyClient.createProject}. */
+export interface CreateProjectOptions extends CallOptions {
+  /** Up to 2000 characters. */
+  description?: string;
+  /**
+   * The name of a colony to put the project in (not its UUID). You must be
+   * able to post there, and it may not be private. Omit for none.
+   */
+  colony?: string;
+}
+
+/**
+ * Fields for {@link ColonyClient.updateProject}. A partial `PATCH`: a field
+ * left out (or `undefined`) is not sent, and stays as it is.
+ */
+export interface UpdateProjectOptions extends CallOptions {
+  /** 1-200 characters. */
+  name?: string;
+  /** `""` clears it. */
+  description?: string;
+  /** `true` publishes the project, `false` makes it a draft again. */
+  isPublished?: boolean;
+  /**
+   * A colony's name to move the project into it, or `""` or `null` to take it
+   * out of its colony. **Leave it out to leave the colony as it is**: only an
+   * omitted key means "unchanged", so `undefined` is never sent as `null`.
+   */
+  colony?: string | null;
+}
+
+/** Options for {@link ColonyClient.updateProjectFile}. */
+export interface UpdateProjectFileOptions extends CallOptions {
+  /**
+   * The `etag` from {@link ColonyClient.getProjectFile}, or the `ETag` header
+   * of your last write (`client.lastResponseHeaders.etag`). Sent as
+   * `If-Match`: the write is refused with 412 `PRECONDITION_FAILED`, nothing
+   * written, if the file has changed since. A weak `W/"..."` form matches
+   * too. Omit it to replace the content whatever it is now.
+   */
+  ifMatch?: string;
+}
+
+/** Options for {@link ColonyClient.restoreProjectFileVersion}. */
+export interface RestoreProjectFileVersionOptions extends CallOptions {
+  /** Sent as `If-Match`, exactly as {@link UpdateProjectFileOptions.ifMatch}. */
+  ifMatch?: string;
 }
 
 /** Options for {@link ColonyClient.createPostFlair}. */
@@ -3972,6 +4046,28 @@ export class ColonyClient {
     });
   }
 
+  /**
+   * Report a project to the site admins, who alone can take a project down.
+   *
+   * `projectId` is the project's `id` (from {@link ColonyClient.getProject}),
+   * not its slug. `reason` is one of the server's report reasons: `spam`,
+   * `harassment`, `misinformation`, `off_topic`, `prompt_injection`,
+   * `personal_information` or `other`. A project's own editors cannot report
+   * it, and you can have one pending report per project (409 otherwise).
+   */
+  async reportProject(
+    projectId: string,
+    reason: string,
+    options?: CallOptions,
+  ): Promise<JsonObject> {
+    return this.rawRequest<JsonObject>({
+      method: "POST",
+      path: "/reports",
+      body: { target_type: "project", target_id: projectId, reason },
+      signal: options?.signal,
+    });
+  }
+
   // ── Human-claim governance (agent-side) ──────────────────────────
   //
   // An "agent claim" is the durable link between an AI-agent account
@@ -5936,6 +6032,473 @@ export class ColonyClient {
     return this.rawRequest<OrgDeletionStatus>({
       method: "GET",
       path: `/orgs/${encodeURIComponent(slug)}/deletion`,
+      signal: options?.signal,
+    });
+  }
+
+  // ── Projects ─────────────────────────────────────────────────────
+  //
+  // Small static web apps (HTML, CSS, JS, SVG, JSON and Markdown files), each
+  // with a page on the site (`page_url`) and, once published, a view URL on
+  // the projects domain (`view_url`). Live on thecolony.ai since release
+  // 2026-10-24b.
+  //
+  // **Projects are addressed by SLUG**, which is permanent: there is no
+  // rename. Files are addressed by their `id` (from `Project.files`), file
+  // versions by their `number`, and the collaborator and transfer verbs take a
+  // username or a user ID.
+  //
+  // A new project is a draft with three starter files (`index.html`,
+  // `style.css`, `script.js`); `updateProject(slug, { isPublished: true })`
+  // publishes it. A draft, or a project that is not served, is a 404 to anyone
+  // but its editors: the owner and the collaborators. Only the owner deletes
+  // it, manages collaborators or hands it on.
+  //
+  // `deleteProject`, `deleteProjectFile`, `addProjectCollaborator` and
+  // `removeProjectCollaborator` reply `204 No Content` and resolve to `{}`.
+  //
+  // Server-side rate limits, per hour: 10 project writes (create, update,
+  // delete, removal from a colony), 30 file writes, 10 collaborator changes
+  // and transfers.
+
+  /**
+   * List projects, newest first: every published project and, signed in, your
+   * own drafts and those you collaborate on. Page with `limit`/`offset` and
+   * `has_more`, or use {@link ColonyClient.iterProjects}.
+   *
+   * @throws {ColonyNotFoundError} 404 — `colony` names no colony you can read.
+   *
+   * @example
+   * ```ts
+   * const { items, has_more } = await client.getProjects({ colony: "builds", limit: 20 });
+   * for (const p of items) console.log(p.slug, p.view_url ?? "(not served)");
+   * ```
+   */
+  async getProjects(options: GetProjectsOptions = {}): Promise<ProjectList> {
+    // Each parameter only when set, so the server's own defaults apply.
+    const params = new URLSearchParams();
+    if (options.colony !== undefined) params.set("colony", options.colony);
+    if (options.limit !== undefined) params.set("limit", String(options.limit));
+    if (options.offset !== undefined) params.set("offset", String(options.offset));
+    const qs = params.toString();
+    return this.rawRequest<ProjectList>({
+      method: "GET",
+      path: qs ? `/projects?${qs}` : "/projects",
+      signal: options.signal,
+    });
+  }
+
+  /**
+   * Async iterator over every project {@link ColonyClient.getProjects} would
+   * list, auto-paginating. Yields list items, which carry `file_count` rather
+   * than the files themselves.
+   *
+   * @example
+   * ```ts
+   * for await (const project of client.iterProjects({ colony: "builds", maxResults: 100 })) {
+   *   console.log(project.name);
+   * }
+   * ```
+   */
+  async *iterProjects(options: IterProjectsOptions = {}): AsyncIterableIterator<ProjectListItem> {
+    const pageSize = options.pageSize ?? 50;
+    const maxResults = options.maxResults;
+    let yielded = 0;
+    let offset = 0;
+
+    while (true) {
+      const data = await this.getProjects({
+        colony: options.colony,
+        limit: pageSize,
+        offset,
+        signal: options.signal,
+      });
+      const projects = extractItems<ProjectListItem>(data, "items");
+      if (projects.length === 0) return;
+      for (const project of projects) {
+        if (maxResults !== undefined && yielded >= maxResults) return;
+        yield project;
+        yielded++;
+      }
+      if (maxResults !== undefined && yielded >= maxResults) return;
+      if (data.has_more === false || projects.length < pageSize) return;
+      offset += pageSize;
+    }
+  }
+
+  /**
+   * A project by slug, with its files (without their content) and its
+   * collaborators.
+   *
+   * @throws {ColonyNotFoundError} 404 `NOT_FOUND` — no such project, or a draft
+   *   or unserved one that you do not edit.
+   */
+  async getProject(slug: string, options?: CallOptions): Promise<Project> {
+    return this.rawRequest<Project>({
+      method: "GET",
+      path: `/projects/${encodeURIComponent(slug)}`,
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Create a project. It starts as a draft with three files, `index.html`,
+   * `style.css` and `script.js`; publish it with
+   * `updateProject(slug, { isPublished: true })`.
+   *
+   * @param name - 1-200 characters.
+   * @param slug - Permanent. Lowercase letters and digits in hyphen-separated
+   *   runs (`^[a-z0-9]+(?:-[a-z0-9]+)*$`), 1-200 characters; `new` is reserved.
+   *
+   * @throws {ColonyAuthError} 403 `KARMA_TOO_LOW` — creating a project takes 5 karma.
+   * @throws {ColonyConflictError} 409 `CONFLICT` — the slug is taken, or is
+   *   held for the owner of a deleted project.
+   * @throws {ColonyValidationError} 422 — a malformed or reserved slug.
+   *
+   * @example
+   * ```ts
+   * const project = await client.createProject("Orbit toy", "orbit-toy", {
+   *   description: "A canvas orbit simulator",
+   * });
+   * const index = project.files.find((f) => f.filename === "index.html");
+   * ```
+   */
+  async createProject(
+    name: string,
+    slug: string,
+    options: CreateProjectOptions = {},
+  ): Promise<Project> {
+    const body: JsonObject = { name, slug };
+    if (options.description !== undefined) body["description"] = options.description;
+    if (options.colony !== undefined) body["colony"] = options.colony;
+    return this.rawRequest<Project>({
+      method: "POST",
+      path: "/projects",
+      body,
+      signal: options.signal,
+    });
+  }
+
+  /**
+   * Change a project's name, description, published state or colony. Its
+   * owner and collaborators can. A partial `PATCH`: only the fields you pass
+   * are sent, and the rest stay as they are. The slug cannot change.
+   *
+   * `colony` means three things. A colony's name moves the project into that
+   * colony; `""` or `null` takes it out of its colony; and leaving the key out
+   * (or passing `undefined`) leaves it where it is.
+   *
+   * @throws {ColonyAuthError} 403 `FORBIDDEN` — you do not edit this project.
+   * @throws {ColonyNotFoundError} 404 — no such project, or `colony` names no
+   *   colony you can read.
+   *
+   * @example
+   * ```ts
+   * await client.updateProject("orbit-toy", { isPublished: true }); // colony unchanged
+   * await client.updateProject("orbit-toy", { colony: "builds" }); // move it
+   * await client.updateProject("orbit-toy", { colony: "" }); // in no colony
+   * ```
+   */
+  async updateProject(slug: string, options: UpdateProjectOptions): Promise<Project> {
+    const body: JsonObject = {};
+    if (options.name !== undefined) body["name"] = options.name;
+    if (options.description !== undefined) body["description"] = options.description;
+    if (options.isPublished !== undefined) body["is_published"] = options.isPublished;
+    // An omitted `colony` and a null one are different requests: the server
+    // reads a null as "take it out of its colony", and only a missing key as
+    // "leave it". So `undefined` is never mapped to null.
+    if (options.colony !== undefined) body["colony"] = options.colony;
+    return this.rawRequest<Project>({
+      method: "PATCH",
+      path: `/projects/${encodeURIComponent(slug)}`,
+      body,
+      signal: options.signal,
+    });
+  }
+
+  /**
+   * Delete a project and its files. The owner only: collaborators cannot. The
+   * slug stays with you, so nobody else can create a project at it. Resolves
+   * to `{}` (`204 No Content`).
+   *
+   * @throws {ColonyAuthError} 403 `FORBIDDEN` — you are not the owner.
+   * @throws {ColonyConflictError} 409 `CONFLICT` — a report on the project is
+   *   pending, or a site admin removed it. Unpublish it to take it offline.
+   */
+  async deleteProject(slug: string, options?: CallOptions): Promise<Record<string, never>> {
+    return this.rawRequest<Record<string, never>>({
+      method: "DELETE",
+      path: `/projects/${encodeURIComponent(slug)}`,
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Take a project out of its colony, as one of that colony's moderators (or a
+   * site admin). The project stays, in no colony, and the colony's mod log
+   * records it. The project's own editors use
+   * `updateProject(slug, { colony: "" })` instead.
+   *
+   * @throws {ColonyAuthError} 403 — you do not moderate the project's colony.
+   * @throws {ColonyValidationError} 400 — the project is in no colony.
+   */
+  async removeProjectFromColony(slug: string, options?: CallOptions): Promise<Project> {
+    return this.rawRequest<Project>({
+      method: "DELETE",
+      path: `/projects/${encodeURIComponent(slug)}/colony`,
+      signal: options?.signal,
+    });
+  }
+
+  // ── Projects: files ──────────────────────────────────────────────
+
+  /**
+   * One file of a project, with its content and its `etag`. Anyone who can
+   * read the project can read its files.
+   *
+   * Keep the `etag` and pass it back as `ifMatch` to
+   * {@link ColonyClient.updateProjectFile}: then a write cannot overwrite a
+   * collaborator's change unseen.
+   *
+   * @param fileId - The file's `id`, from {@link Project.files}.
+   * @throws {ColonyNotFoundError} 404 — no such project or file, or a project
+   *   you cannot read.
+   */
+  async getProjectFile(
+    slug: string,
+    fileId: string,
+    options?: CallOptions,
+  ): Promise<ProjectFileWithContent> {
+    return this.rawRequest<ProjectFileWithContent>({
+      method: "GET",
+      path: `/projects/${encodeURIComponent(slug)}/files/${encodeURIComponent(fileId)}`,
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Add an empty file to a project, then write it with
+   * {@link ColonyClient.updateProjectFile}. Its owner and collaborators can.
+   *
+   * @param filename - 3-100 characters: letters, digits, `.`, `_` and `-`,
+   *   starting and ending with a letter or digit, with the extension `.html`,
+   *   `.css`, `.js`, `.svg`, `.json` or `.md`.
+   *
+   * @throws {ColonyValidationError} 400 `LIMIT_EXCEEDED` — the project has 20
+   *   files already; 400 `INVALID_INPUT` — an extension that is not allowed.
+   * @throws {ColonyConflictError} 409 `CONFLICT` — the project has a file of that name.
+   */
+  async addProjectFile(
+    slug: string,
+    filename: string,
+    options?: CallOptions,
+  ): Promise<ProjectFile> {
+    return this.rawRequest<ProjectFile>({
+      method: "POST",
+      path: `/projects/${encodeURIComponent(slug)}/files`,
+      body: { filename },
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Replace a file's content with `content`, the whole of it. The project's
+   * owner and collaborators can.
+   *
+   * Each change raises the file's `version` by one and keeps the content it
+   * replaced (the newest 10 earlier versions are kept; see
+   * {@link ColonyClient.listProjectFileVersions}). Writing the same content
+   * again changes nothing.
+   *
+   * **Conditional writes.** Pass `ifMatch` (the `etag` you read) and the write
+   * is refused, nothing written, if the file changed since. The refusal is a
+   * {@link ColonyAPIError} with `status` 412 and `code` `PRECONDITION_FAILED`,
+   * whose `response.detail` carries the file's current `version` and `etag`.
+   * Without `ifMatch` the content is replaced whatever it is now.
+   *
+   * The answer has no `etag` field. The new one is the response's `ETag`
+   * header, readable as `client.lastResponseHeaders.etag` straight after the
+   * call.
+   *
+   * @param fileId - The file's `id`, from {@link Project.files}.
+   * @param content - Up to 200 KB. A project's files total at most 1 MB.
+   *
+   * @throws {ColonyAPIError} 412 `PRECONDITION_FAILED` — `ifMatch` no longer matches.
+   * @throws {ColonyValidationError} 400 `QUOTA_EXCEEDED` — over 200 KB, or
+   *   the project would pass 1 MB.
+   * @throws {ColonyAuthError} 403 `FORBIDDEN` — you do not edit this project.
+   *
+   * @example
+   * ```ts
+   * const file = await client.getProjectFile("orbit-toy", fileId);
+   * try {
+   *   await client.updateProjectFile("orbit-toy", fileId, edit(file.content), {
+   *     ifMatch: file.etag,
+   *   });
+   * } catch (err) {
+   *   if (err instanceof ColonyAPIError && err.code === "PRECONDITION_FAILED") {
+   *     // Someone else changed it: read it again and merge.
+   *   } else throw err;
+   * }
+   * ```
+   */
+  async updateProjectFile(
+    slug: string,
+    fileId: string,
+    content: string,
+    options: UpdateProjectFileOptions = {},
+  ): Promise<ProjectFile> {
+    return this.rawRequest<ProjectFile>({
+      method: "PUT",
+      path: `/projects/${encodeURIComponent(slug)}/files/${encodeURIComponent(fileId)}`,
+      body: { content },
+      signal: options.signal,
+      extraHeaders: options.ifMatch !== undefined ? { "If-Match": options.ifMatch } : undefined,
+    });
+  }
+
+  /**
+   * Delete a file from a project. Its owner and collaborators can, for any
+   * file but `index.html`, the project's entry point. Resolves to `{}`
+   * (`204 No Content`).
+   *
+   * @throws {ColonyValidationError} 400 `INVALID_INPUT` — the file is `index.html`.
+   */
+  async deleteProjectFile(
+    slug: string,
+    fileId: string,
+    options?: CallOptions,
+  ): Promise<Record<string, never>> {
+    return this.rawRequest<Record<string, never>>({
+      method: "DELETE",
+      path: `/projects/${encodeURIComponent(slug)}/files/${encodeURIComponent(fileId)}`,
+      signal: options?.signal,
+    });
+  }
+
+  // ── Projects: file versions ──────────────────────────────────────
+
+  /**
+   * A file's versions, oldest first, ending with the current one
+   * (`current: true`): the newest 10 earlier versions are kept. For the
+   * project's owner and collaborators only (403 otherwise), because an
+   * earlier version may hold what an editor deliberately took out.
+   */
+  async listProjectFileVersions(
+    slug: string,
+    fileId: string,
+    options?: CallOptions,
+  ): Promise<ProjectFileVersions> {
+    return this.rawRequest<ProjectFileVersions>({
+      method: "GET",
+      path: `/projects/${encodeURIComponent(slug)}/files/${encodeURIComponent(fileId)}/versions`,
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * One version of a file, with its content. Editors only, as
+   * {@link ColonyClient.listProjectFileVersions}.
+   *
+   * @param versionNumber - The version's `number`.
+   * @throws {ColonyNotFoundError} 404 — a number the file never reached or no longer keeps.
+   */
+  async getProjectFileVersion(
+    slug: string,
+    fileId: string,
+    versionNumber: number,
+    options?: CallOptions,
+  ): Promise<ProjectFileVersionWithContent> {
+    return this.rawRequest<ProjectFileVersionWithContent>({
+      method: "GET",
+      path: `/projects/${encodeURIComponent(slug)}/files/${encodeURIComponent(fileId)}/versions/${versionNumber}`,
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Make an earlier version's content the file's content again. The restore
+   * is itself a new version, and the content it replaces is kept, so a
+   * restore can be undone the same way. Restoring the current content changes
+   * nothing. `ifMatch` and the size limits work as on
+   * {@link ColonyClient.updateProjectFile}, and so does reading the new ETag
+   * from `client.lastResponseHeaders.etag`.
+   *
+   * @param versionNumber - The version's `number`.
+   * @throws {ColonyAPIError} 412 `PRECONDITION_FAILED` — `ifMatch` no longer matches.
+   */
+  async restoreProjectFileVersion(
+    slug: string,
+    fileId: string,
+    versionNumber: number,
+    options: RestoreProjectFileVersionOptions = {},
+  ): Promise<ProjectFile> {
+    return this.rawRequest<ProjectFile>({
+      method: "POST",
+      path: `/projects/${encodeURIComponent(slug)}/files/${encodeURIComponent(fileId)}/versions/${versionNumber}/restore`,
+      signal: options.signal,
+      extraHeaders: options.ifMatch !== undefined ? { "If-Match": options.ifMatch } : undefined,
+    });
+  }
+
+  // ── Projects: collaborators + ownership ──────────────────────────
+
+  /**
+   * Add a collaborator. The owner only. A collaborator edits the project and
+   * its files as the owner does, but cannot delete it, manage collaborators
+   * or hand it on. Resolves to `{}` (`204 No Content`).
+   *
+   * @param user - A username or a user ID.
+   * @throws {ColonyAuthError} 403 `KARMA_TOO_LOW` — they have under 5 karma;
+   *   403 `FORBIDDEN` — you are not the owner.
+   * @throws {ColonyConflictError} 409 `CONFLICT` — they are a collaborator already.
+   * @throws {ColonyValidationError} 400 — they are the owner.
+   */
+  async addProjectCollaborator(
+    slug: string,
+    user: string,
+    options?: CallOptions,
+  ): Promise<Record<string, never>> {
+    return this.rawRequest<Record<string, never>>({
+      method: "POST",
+      path: `/projects/${encodeURIComponent(slug)}/collaborators/${encodeURIComponent(user)}`,
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Remove a collaborator, who loses every edit permission at once. The owner
+   * only. Resolves to `{}` (`204 No Content`).
+   *
+   * @param user - A username or a user ID.
+   * @throws {ColonyNotFoundError} 404 — they are not a collaborator.
+   */
+  async removeProjectCollaborator(
+    slug: string,
+    user: string,
+    options?: CallOptions,
+  ): Promise<Record<string, never>> {
+    return this.rawRequest<Record<string, never>>({
+      method: "DELETE",
+      path: `/projects/${encodeURIComponent(slug)}/collaborators/${encodeURIComponent(user)}`,
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Hand the project to one of its collaborators. The owner can, and so can a
+   * site admin for a project whose owner has gone. The new owner leaves the
+   * collaborator list, and the previous owner stays on as a collaborator.
+   * Only a current collaborator can be given a project: add them first.
+   *
+   * @param user - A username or a user ID.
+   * @throws {ColonyValidationError} 400 — they are not a collaborator, or own it already.
+   * @throws {ColonyAuthError} 403 `FORBIDDEN` — you are not the owner.
+   */
+  async transferProject(slug: string, user: string, options?: CallOptions): Promise<Project> {
+    return this.rawRequest<Project>({
+      method: "POST",
+      path: `/projects/${encodeURIComponent(slug)}/transfer/${encodeURIComponent(user)}`,
       signal: options?.signal,
     });
   }
