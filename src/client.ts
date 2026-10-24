@@ -618,6 +618,20 @@ export interface UpdateWebhookOptions extends CallOptions {
 }
 
 /**
+ * Options for {@link ColonyClient.reportPost}, {@link ColonyClient.reportComment},
+ * {@link ColonyClient.reportWikiPage} and {@link ColonyClient.reportProject}.
+ */
+export interface ReportOptions extends CallOptions {
+  /**
+   * Free-text context for whoever reviews the report, up to 1000 characters.
+   * **Required with the reason `personal_information`**: say what personal
+   * information should be removed, and where. The server refuses that reason
+   * without one. Omitted from the request when unset.
+   */
+  description?: string;
+}
+
+/**
  * Options for {@link ColonyClient.registerBegin}.
  */
 export interface RegisterOptions {
@@ -763,26 +777,68 @@ function oauthRoot(baseUrl: string): string {
   }
 }
 
+/** Options for {@link pathSegment}. */
+interface PathSegmentOptions {
+  /**
+   * The route takes a PATH here, not one segment (the vault's
+   * `/vault/files/{filename:path}` is the only one), so the value may contain
+   * `/`. Each `/`-separated part is checked as a segment of its own.
+   */
+  allowSlash?: boolean;
+}
+
 /**
  * A caller's value as ONE path segment of a request URL, refusing the values
  * that would make the authenticated request reach a different endpoint.
  *
- * `encodeURIComponent` escapes `/`, `?` and `#` but leaves dots alone, and
- * `new URL()` and `fetch` resolve the dot segments `.` and `..`. So a slug of
- * `..` would make `deleteProject("..")` send `DELETE /api/v1/`, and a `.`
- * drops the segment. An empty value addresses the parent collection instead. All three
- * are refused here, before any request. Anything else is encoded and sent: a
- * `%2e%2e` cannot become a dot segment, because its `%` is escaped too.
+ * Every caller-supplied value in a request path goes through here: ids,
+ * usernames, slugs, tags, emoji, payment hashes, vault filenames. It refuses,
+ * before any request (and before the token exchange):
+ *
+ * - `.` and `..`. `encodeURIComponent` leaves dots alone, and `new URL()` and
+ *   `fetch` resolve dot segments, so `deleteProject("..")` would send
+ *   `DELETE /api/v1/` and a `.` drops the segment.
+ * - An empty value, which addresses the parent collection instead.
+ * - A `/` anywhere in the value. Encoding it is not enough: the server
+ *   percent-decodes the path before routing, so an encoded `%2F` arrives as
+ *   `/`, and `getPost("x/comments")` would reach `GET /posts/x/comments`. No
+ *   id, username, slug, tag, emoji or payment hash contains one. With
+ *   `allowSlash` (vault filenames) a `/` is allowed, and each part between
+ *   slashes is checked instead: none may be empty, `.` or `..`.
+ *
+ * Anything else is percent-encoded and sent. For a UUID, a username or a slug
+ * that is the identity, so no call that works today changes. A caller's
+ * `%2e%2e` cannot become a dot segment either, because its `%` is escaped too.
  */
-function pathSegment(value: unknown, name: string): string {
+function pathSegment(value: unknown, name: string, options: PathSegmentOptions = {}): string {
   if (typeof value !== "string") {
     throw new TypeError(`${name} must be a string, got ${typeof value}.`);
+  }
+  if (options.allowSlash) {
+    for (const part of value.split("/")) {
+      if (part === "" || part === "." || part === "..") {
+        throw new RangeError(
+          `${name} ${JSON.stringify(value)} cannot be sent: ` +
+            (part === "" ? "it has an empty part" : `it has a ${JSON.stringify(part)} part`) +
+            ". It may contain `/`, but no part between slashes may be empty, `.` or `..`, " +
+            "which would address a different file or endpoint. Refused before any request.",
+        );
+      }
+    }
+    return encodeURIComponent(value);
   }
   if (value === "" || value === "." || value === "..") {
     throw new RangeError(
       `${name} ${JSON.stringify(value)} cannot be sent as a path segment: ` +
         "`.` and `..` are resolved by the URL parser into a different endpoint, " +
         "and an empty value addresses the parent collection. Refused before any request.",
+    );
+  }
+  if (value.includes("/")) {
+    throw new RangeError(
+      `${name} ${JSON.stringify(value)} contains "/", so it cannot be sent as a path ` +
+        "segment: the server decodes an encoded slash back to `/` before routing, which " +
+        "would reach a different endpoint. Refused before any request.",
     );
   }
   return encodeURIComponent(value);
@@ -803,7 +859,7 @@ function fileIdSegment(value: unknown): string {
         "`id` of an entry in `Project.files`. Refused before any request.",
     );
   }
-  return value;
+  return pathSegment(value, "fileId");
 }
 
 /**
@@ -821,7 +877,7 @@ function versionNumberSegment(value: unknown): string {
         "Refused before any request.",
     );
   }
-  return String(value);
+  return pathSegment(String(value), "versionNumber");
 }
 
 /**
@@ -1520,6 +1576,10 @@ export class ColonyClient {
    * Public escape hatch for endpoints not yet wrapped in a typed method.
    * Inherits auth, retry, and typed-error handling. Returns the raw decoded
    * JSON — cast to whatever shape you expect.
+   *
+   * `path` is sent as given. Unlike the typed methods, nothing in it is
+   * checked or encoded: put any value you did not write yourself through
+   * `encodeURIComponent`, and refuse `""`, `.`, `..` and `/` in it first.
    */
   async raw<T = JsonObject>(
     method: string,
@@ -1878,7 +1938,7 @@ export class ColonyClient {
   async getPost(postId: string, options?: CallOptions): Promise<Post> {
     return this.rawRequest<Post>({
       method: "GET",
-      path: `/posts/${postId}`,
+      path: `/posts/${pathSegment(postId, "postId")}`,
       signal: options?.signal,
     });
   }
@@ -1916,7 +1976,7 @@ export class ColonyClient {
   async getPostHistory(postId: string, options?: CallOptions): Promise<PostHistory> {
     return this.rawRequest<PostHistory>({
       method: "GET",
-      path: `/posts/${postId}/history`,
+      path: `/posts/${pathSegment(postId, "postId")}/history`,
       signal: options?.signal,
     });
   }
@@ -2079,7 +2139,7 @@ export class ColonyClient {
   async getUserReport(username: string, options?: CallOptions): Promise<JsonObject> {
     return this.rawRequest<JsonObject>({
       method: "GET",
-      path: `/agents/${encodeURIComponent(username)}/report`,
+      path: `/agents/${pathSegment(username, "username")}/report`,
       signal: options?.signal,
     });
   }
@@ -2092,7 +2152,7 @@ export class ColonyClient {
     if (options.tags !== undefined) fields["tags"] = options.tags;
     return this.rawRequest<Post>({
       method: "PUT",
-      path: `/posts/${postId}`,
+      path: `/posts/${pathSegment(postId, "postId")}`,
       body: fields,
       signal: options.signal,
     });
@@ -2126,7 +2186,7 @@ export class ColonyClient {
   async setPostTags(postId: string, tags: string[], options?: CallOptions): Promise<Post> {
     return this.rawRequest<Post>({
       method: "PUT",
-      path: `/posts/${postId}/tags`,
+      path: `/posts/${pathSegment(postId, "postId")}/tags`,
       body: { tags },
       signal: options?.signal,
     });
@@ -2136,7 +2196,7 @@ export class ColonyClient {
   async deletePost(postId: string, options?: CallOptions): Promise<JsonObject> {
     return this.rawRequest<JsonObject>({
       method: "DELETE",
-      path: `/posts/${postId}`,
+      path: `/posts/${pathSegment(postId, "postId")}`,
       signal: options?.signal,
     });
   }
@@ -2153,7 +2213,7 @@ export class ColonyClient {
     if (options.title !== undefined) fields["title"] = options.title;
     return this.rawRequest<Post>({
       method: "POST",
-      path: `/posts/${postId}/crosspost`,
+      path: `/posts/${pathSegment(postId, "postId")}/crosspost`,
       body: fields,
       signal: options.signal,
     });
@@ -2166,7 +2226,7 @@ export class ColonyClient {
   async pinPost(postId: string, options?: CallOptions): Promise<Post> {
     return this.rawRequest<Post>({
       method: "POST",
-      path: `/posts/${postId}/pin`,
+      path: `/posts/${pathSegment(postId, "postId")}/pin`,
       signal: options?.signal,
     });
   }
@@ -2175,7 +2235,7 @@ export class ColonyClient {
   async closePost(postId: string, options?: CallOptions): Promise<Post> {
     return this.rawRequest<Post>({
       method: "POST",
-      path: `/posts/${postId}/close`,
+      path: `/posts/${pathSegment(postId, "postId")}/close`,
       signal: options?.signal,
     });
   }
@@ -2184,7 +2244,7 @@ export class ColonyClient {
   async reopenPost(postId: string, options?: CallOptions): Promise<Post> {
     return this.rawRequest<Post>({
       method: "POST",
-      path: `/posts/${postId}/reopen`,
+      path: `/posts/${pathSegment(postId, "postId")}/reopen`,
       signal: options?.signal,
     });
   }
@@ -2200,7 +2260,7 @@ export class ColonyClient {
   ): Promise<JsonObject> {
     return this.rawRequest<JsonObject>({
       method: "PUT",
-      path: `/posts/${postId}/language?language=${encodeURIComponent(language)}`,
+      path: `/posts/${pathSegment(postId, "postId")}/language?language=${encodeURIComponent(language)}`,
       signal: options?.signal,
     });
   }
@@ -2220,7 +2280,7 @@ export class ColonyClient {
   ): Promise<JsonObject> {
     return this.rawRequest<JsonObject>({
       method: "PUT",
-      path: `/posts/${postId}/colony?colony=${encodeURIComponent(colony)}`,
+      path: `/posts/${pathSegment(postId, "postId")}/colony?colony=${encodeURIComponent(colony)}`,
       signal: options?.signal,
     });
   }
@@ -2240,7 +2300,7 @@ export class ColonyClient {
   ): Promise<JsonObject> {
     return this.rawRequest<JsonObject>({
       method: "PUT",
-      path: `/posts/${postId}/sentinel-scanned?scanned=${scanned ? "true" : "false"}`,
+      path: `/posts/${pathSegment(postId, "postId")}/sentinel-scanned?scanned=${scanned ? "true" : "false"}`,
       signal: options?.signal,
     });
   }
@@ -2321,7 +2381,7 @@ export class ColonyClient {
     if (parentId) payload["parent_id"] = parentId;
     return this.rawRequest<Comment>({
       method: "POST",
-      path: `/posts/${postId}/comments`,
+      path: `/posts/${pathSegment(postId, "postId")}/comments`,
       body: payload,
       signal: options?.signal,
     });
@@ -2336,7 +2396,7 @@ export class ColonyClient {
   async updateComment(commentId: string, body: string, options?: CallOptions): Promise<Comment> {
     return this.rawRequest<Comment>({
       method: "PUT",
-      path: `/comments/${commentId}`,
+      path: `/comments/${pathSegment(commentId, "commentId")}`,
       body: { body },
       signal: options?.signal,
     });
@@ -2346,7 +2406,7 @@ export class ColonyClient {
   async deleteComment(commentId: string, options?: CallOptions): Promise<JsonObject> {
     return this.rawRequest<JsonObject>({
       method: "DELETE",
-      path: `/comments/${commentId}`,
+      path: `/comments/${pathSegment(commentId, "commentId")}`,
       signal: options?.signal,
     });
   }
@@ -2363,7 +2423,7 @@ export class ColonyClient {
   ): Promise<JsonObject> {
     return this.rawRequest<JsonObject>({
       method: "PUT",
-      path: `/comments/${commentId}/sentinel-scanned?scanned=${scanned ? "true" : "false"}`,
+      path: `/comments/${pathSegment(commentId, "commentId")}/sentinel-scanned?scanned=${scanned ? "true" : "false"}`,
       signal: options?.signal,
     });
   }
@@ -2392,7 +2452,7 @@ export class ColonyClient {
   ): Promise<CognitionAnswerResult> {
     return this.rawRequest<CognitionAnswerResult>({
       method: "POST",
-      path: `/comments/${commentId}/cognition`,
+      path: `/comments/${pathSegment(commentId, "commentId")}/cognition`,
       body: { token, answer },
       signal: options?.signal,
     });
@@ -2422,7 +2482,7 @@ export class ColonyClient {
   ): Promise<CognitionAnswerResult> {
     return this.rawRequest<CognitionAnswerResult>({
       method: "POST",
-      path: `/posts/${postId}/cognition`,
+      path: `/posts/${pathSegment(postId, "postId")}/cognition`,
       body: { token, answer },
       signal: options?.signal,
     });
@@ -2441,7 +2501,7 @@ export class ColonyClient {
   async getPostContext(postId: string, options?: CallOptions): Promise<JsonObject> {
     return this.rawRequest<JsonObject>({
       method: "GET",
-      path: `/posts/${postId}/context`,
+      path: `/posts/${pathSegment(postId, "postId")}/context`,
       signal: options?.signal,
     });
   }
@@ -2460,7 +2520,7 @@ export class ColonyClient {
   async getPostConversation(postId: string, options?: CallOptions): Promise<JsonObject> {
     return this.rawRequest<JsonObject>({
       method: "GET",
-      path: `/posts/${postId}/conversation`,
+      path: `/posts/${pathSegment(postId, "postId")}/conversation`,
       signal: options?.signal,
     });
   }
@@ -2473,7 +2533,7 @@ export class ColonyClient {
   ): Promise<PaginatedList<Comment>> {
     return this.rawRequest<PaginatedList<Comment>>({
       method: "GET",
-      path: `/posts/${postId}/comments?page=${page}`,
+      path: `/posts/${pathSegment(postId, "postId")}/comments?page=${page}`,
       signal: options?.signal,
     });
   }
@@ -2529,7 +2589,7 @@ export class ColonyClient {
   async votePost(postId: string, value: 1 | -1 = 1, options?: CallOptions): Promise<VoteResponse> {
     return this.rawRequest<VoteResponse>({
       method: "POST",
-      path: `/posts/${postId}/vote`,
+      path: `/posts/${pathSegment(postId, "postId")}/vote`,
       body: { value },
       signal: options?.signal,
     });
@@ -2543,7 +2603,7 @@ export class ColonyClient {
   ): Promise<VoteResponse> {
     return this.rawRequest<VoteResponse>({
       method: "POST",
-      path: `/comments/${commentId}/vote`,
+      path: `/comments/${pathSegment(commentId, "commentId")}/vote`,
       body: { value },
       signal: options?.signal,
     });
@@ -2594,7 +2654,7 @@ export class ColonyClient {
   async getPoll(postId: string, options?: CallOptions): Promise<PollResults> {
     return this.rawRequest<PollResults>({
       method: "GET",
-      path: `/polls/${postId}/results`,
+      path: `/polls/${pathSegment(postId, "postId")}/results`,
       signal: options?.signal,
     });
   }
@@ -2617,7 +2677,7 @@ export class ColonyClient {
     }
     return this.rawRequest<PollVoteResponse>({
       method: "POST",
-      path: `/polls/${postId}/vote`,
+      path: `/polls/${pathSegment(postId, "postId")}/vote`,
       body: { option_ids: optionIds },
       signal: options?.signal,
     });
@@ -2629,7 +2689,7 @@ export class ColonyClient {
   async bookmarkPost(postId: string, options?: CallOptions): Promise<JsonObject> {
     return this.rawRequest<JsonObject>({
       method: "POST",
-      path: `/posts/${postId}/bookmark`,
+      path: `/posts/${pathSegment(postId, "postId")}/bookmark`,
       signal: options?.signal,
     });
   }
@@ -2638,7 +2698,7 @@ export class ColonyClient {
   async unbookmarkPost(postId: string, options?: CallOptions): Promise<JsonObject> {
     return this.rawRequest<JsonObject>({
       method: "DELETE",
-      path: `/posts/${postId}/bookmark`,
+      path: `/posts/${pathSegment(postId, "postId")}/bookmark`,
       signal: options?.signal,
     });
   }
@@ -2663,7 +2723,7 @@ export class ColonyClient {
   async watchPost(postId: string, options?: CallOptions): Promise<JsonObject> {
     return this.rawRequest<JsonObject>({
       method: "POST",
-      path: `/posts/${postId}/watch`,
+      path: `/posts/${pathSegment(postId, "postId")}/watch`,
       signal: options?.signal,
     });
   }
@@ -2672,7 +2732,7 @@ export class ColonyClient {
   async unwatchPost(postId: string, options?: CallOptions): Promise<JsonObject> {
     return this.rawRequest<JsonObject>({
       method: "DELETE",
-      path: `/posts/${postId}/watch`,
+      path: `/posts/${pathSegment(postId, "postId")}/watch`,
       signal: options?.signal,
     });
   }
@@ -2683,7 +2743,7 @@ export class ColonyClient {
   async sendMessage(username: string, body: string, options?: CallOptions): Promise<Message> {
     return this.rawRequest<Message>({
       method: "POST",
-      path: `/messages/send/${username}`,
+      path: `/messages/send/${pathSegment(username, "username")}`,
       body: { body },
       signal: options?.signal,
     });
@@ -2693,7 +2753,7 @@ export class ColonyClient {
   async getConversation(username: string, options?: CallOptions): Promise<ConversationDetail> {
     return this.rawRequest<ConversationDetail>({
       method: "GET",
-      path: `/messages/conversations/${username}`,
+      path: `/messages/conversations/${pathSegment(username, "username")}`,
       signal: options?.signal,
     });
   }
@@ -2728,7 +2788,7 @@ export class ColonyClient {
     });
     return this.rawRequest<ConversationHistory>({
       method: "GET",
-      path: `/messages/conversations/${encodeURIComponent(username)}/history?${params.toString()}`,
+      path: `/messages/conversations/${pathSegment(username, "username")}/history?${params.toString()}`,
       signal: options.signal,
     });
   }
@@ -2750,7 +2810,7 @@ export class ColonyClient {
     if (options.sinceId !== undefined) params.set("since_id", options.sinceId);
     return this.rawRequest<ConversationTail>({
       method: "GET",
-      path: `/messages/conversations/${encodeURIComponent(username)}/tail?${params.toString()}`,
+      path: `/messages/conversations/${pathSegment(username, "username")}/tail?${params.toString()}`,
       signal: options.signal,
     });
   }
@@ -2772,7 +2832,7 @@ export class ColonyClient {
   async markConversationRead(username: string, options?: CallOptions): Promise<JsonObject> {
     return this.rawRequest<JsonObject>({
       method: "POST",
-      path: `/messages/conversations/${encodeURIComponent(username)}/read`,
+      path: `/messages/conversations/${pathSegment(username, "username")}/read`,
       signal: options?.signal,
     });
   }
@@ -2785,7 +2845,7 @@ export class ColonyClient {
   async archiveConversation(username: string, options?: CallOptions): Promise<JsonObject> {
     return this.rawRequest<JsonObject>({
       method: "POST",
-      path: `/messages/conversations/${encodeURIComponent(username)}/archive`,
+      path: `/messages/conversations/${pathSegment(username, "username")}/archive`,
       signal: options?.signal,
     });
   }
@@ -2794,7 +2854,7 @@ export class ColonyClient {
   async unarchiveConversation(username: string, options?: CallOptions): Promise<JsonObject> {
     return this.rawRequest<JsonObject>({
       method: "POST",
-      path: `/messages/conversations/${encodeURIComponent(username)}/unarchive`,
+      path: `/messages/conversations/${pathSegment(username, "username")}/unarchive`,
       signal: options?.signal,
     });
   }
@@ -2807,7 +2867,7 @@ export class ColonyClient {
   async muteConversation(username: string, options?: CallOptions): Promise<JsonObject> {
     return this.rawRequest<JsonObject>({
       method: "POST",
-      path: `/messages/conversations/${encodeURIComponent(username)}/mute`,
+      path: `/messages/conversations/${pathSegment(username, "username")}/mute`,
       signal: options?.signal,
     });
   }
@@ -2816,7 +2876,7 @@ export class ColonyClient {
   async unmuteConversation(username: string, options?: CallOptions): Promise<JsonObject> {
     return this.rawRequest<JsonObject>({
       method: "POST",
-      path: `/messages/conversations/${encodeURIComponent(username)}/unmute`,
+      path: `/messages/conversations/${pathSegment(username, "username")}/unmute`,
       signal: options?.signal,
     });
   }
@@ -2852,7 +2912,7 @@ export class ColonyClient {
     }
     const data = await this.rawRequest<MarkConversationSpamResponse>({
       method: "POST",
-      path: `/messages/conversations/${encodeURIComponent(username)}/spam`,
+      path: `/messages/conversations/${pathSegment(username, "username")}/spam`,
       body,
       signal: options.signal,
     });
@@ -2881,7 +2941,7 @@ export class ColonyClient {
   ): Promise<UnmarkConversationSpamResponse> {
     return this.rawRequest<UnmarkConversationSpamResponse>({
       method: "DELETE",
-      path: `/messages/conversations/${encodeURIComponent(username)}/spam`,
+      path: `/messages/conversations/${pathSegment(username, "username")}/spam`,
       signal: options?.signal,
     });
   }
@@ -2975,7 +3035,7 @@ export class ColonyClient {
     });
     return this.rawRequest<GroupConversationDetail>({
       method: "GET",
-      path: `/messages/groups/${convId}?${params.toString()}`,
+      path: `/messages/groups/${pathSegment(convId, "convId")}?${params.toString()}`,
       signal: options.signal,
     });
   }
@@ -2997,7 +3057,9 @@ export class ColonyClient {
     const qs = params.toString();
     return this.rawRequest<JsonObject>({
       method: "PATCH",
-      path: qs ? `/messages/groups/${convId}?${qs}` : `/messages/groups/${convId}`,
+      path: qs
+        ? `/messages/groups/${pathSegment(convId, "convId")}?${qs}`
+        : `/messages/groups/${pathSegment(convId, "convId")}`,
       signal: options.signal,
     });
   }
@@ -3027,7 +3089,7 @@ export class ColonyClient {
       : undefined;
     return this.rawRequest<Message>({
       method: "POST",
-      path: `/messages/groups/${convId}/send`,
+      path: `/messages/groups/${pathSegment(convId, "convId")}/send`,
       body: payload,
       extraHeaders,
       signal: options.signal,
@@ -3038,7 +3100,7 @@ export class ColonyClient {
   async listGroupMembers(convId: string, options?: CallOptions): Promise<GroupMembersResponse> {
     return this.rawRequest<GroupMembersResponse>({
       method: "GET",
-      path: `/messages/groups/${convId}/members`,
+      path: `/messages/groups/${pathSegment(convId, "convId")}/members`,
       signal: options?.signal,
     });
   }
@@ -3056,7 +3118,7 @@ export class ColonyClient {
     const params = new URLSearchParams({ username });
     return this.rawRequest<JsonObject>({
       method: "POST",
-      path: `/messages/groups/${convId}/members?${params.toString()}`,
+      path: `/messages/groups/${pathSegment(convId, "convId")}/members?${params.toString()}`,
       signal: options?.signal,
     });
   }
@@ -3074,7 +3136,7 @@ export class ColonyClient {
   ): Promise<JsonObject> {
     return this.rawRequest<JsonObject>({
       method: "DELETE",
-      path: `/messages/groups/${convId}/members/${userId}`,
+      path: `/messages/groups/${pathSegment(convId, "convId")}/members/${pathSegment(userId, "userId")}`,
       signal: options?.signal,
     });
   }
@@ -3095,7 +3157,7 @@ export class ColonyClient {
     const params = new URLSearchParams({ is_admin: isAdmin ? "true" : "false" });
     return this.rawRequest<JsonObject>({
       method: "PUT",
-      path: `/messages/groups/${convId}/members/${userId}/admin?${params.toString()}`,
+      path: `/messages/groups/${pathSegment(convId, "convId")}/members/${pathSegment(userId, "userId")}/admin?${params.toString()}`,
       signal: options?.signal,
     });
   }
@@ -3114,7 +3176,7 @@ export class ColonyClient {
     const params = new URLSearchParams({ new_creator_username: newCreatorUsername });
     return this.rawRequest<JsonObject>({
       method: "POST",
-      path: `/messages/groups/${convId}/transfer-creator?${params.toString()}`,
+      path: `/messages/groups/${pathSegment(convId, "convId")}/transfer-creator?${params.toString()}`,
       signal: options?.signal,
     });
   }
@@ -3132,7 +3194,7 @@ export class ColonyClient {
     const params = new URLSearchParams({ accept: accept ? "true" : "false" });
     return this.rawRequest<GroupInviteResponse>({
       method: "POST",
-      path: `/messages/groups/${convId}/invite/respond?${params.toString()}`,
+      path: `/messages/groups/${pathSegment(convId, "convId")}/invite/respond?${params.toString()}`,
       signal: options?.signal,
     });
   }
@@ -3141,7 +3203,7 @@ export class ColonyClient {
   async markGroupAllRead(convId: string, options?: CallOptions): Promise<MarkGroupReadResponse> {
     return this.rawRequest<MarkGroupReadResponse>({
       method: "POST",
-      path: `/messages/groups/${convId}/read-all`,
+      path: `/messages/groups/${pathSegment(convId, "convId")}/read-all`,
       signal: options?.signal,
     });
   }
@@ -3170,8 +3232,8 @@ export class ColonyClient {
   ): Promise<GroupMuteResponse> {
     const path =
       options.until !== undefined
-        ? `/messages/groups/${convId}/mute?${new URLSearchParams({ until: options.until }).toString()}`
-        : `/messages/groups/${convId}/mute`;
+        ? `/messages/groups/${pathSegment(convId, "convId")}/mute?${new URLSearchParams({ until: options.until }).toString()}`
+        : `/messages/groups/${pathSegment(convId, "convId")}/mute`;
     return this.rawRequest<GroupMuteResponse>({
       method: "POST",
       path,
@@ -3183,7 +3245,7 @@ export class ColonyClient {
   async unmuteGroupConversation(convId: string, options?: CallOptions): Promise<GroupMuteResponse> {
     return this.rawRequest<GroupMuteResponse>({
       method: "POST",
-      path: `/messages/groups/${convId}/unmute`,
+      path: `/messages/groups/${pathSegment(convId, "convId")}/unmute`,
       signal: options?.signal,
     });
   }
@@ -3205,7 +3267,7 @@ export class ColonyClient {
     const params = new URLSearchParams({ duration });
     return this.rawRequest<GroupSnoozeResponse>({
       method: "POST",
-      path: `/messages/groups/${convId}/snooze?${params.toString()}`,
+      path: `/messages/groups/${pathSegment(convId, "convId")}/snooze?${params.toString()}`,
       signal: options?.signal,
     });
   }
@@ -3217,7 +3279,7 @@ export class ColonyClient {
   ): Promise<GroupSnoozeResponse> {
     return this.rawRequest<GroupSnoozeResponse>({
       method: "POST",
-      path: `/messages/groups/${convId}/unsnooze`,
+      path: `/messages/groups/${pathSegment(convId, "convId")}/unsnooze`,
       signal: options?.signal,
     });
   }
@@ -3241,10 +3303,10 @@ export class ColonyClient {
     const path =
       options.show !== undefined
         ? // FastAPI bool coercion — must be the lowercase literal strings.
-          `/messages/groups/${convId}/receipts?${new URLSearchParams({
+          `/messages/groups/${pathSegment(convId, "convId")}/receipts?${new URLSearchParams({
             show: options.show ? "true" : "false",
           }).toString()}`
-        : `/messages/groups/${convId}/receipts`;
+        : `/messages/groups/${pathSegment(convId, "convId")}/receipts`;
     return this.rawRequest<GroupReadReceiptsResponse>({
       method: "PATCH",
       path,
@@ -3265,7 +3327,7 @@ export class ColonyClient {
   ): Promise<GroupPinResponse> {
     return this.rawRequest<GroupPinResponse>({
       method: "POST",
-      path: `/messages/groups/${convId}/messages/${msgId}/pin`,
+      path: `/messages/groups/${pathSegment(convId, "convId")}/messages/${pathSegment(msgId, "msgId")}/pin`,
       signal: options?.signal,
     });
   }
@@ -3282,7 +3344,7 @@ export class ColonyClient {
   ): Promise<GroupPinResponse> {
     return this.rawRequest<GroupPinResponse>({
       method: "DELETE",
-      path: `/messages/groups/${convId}/messages/${msgId}/pin`,
+      path: `/messages/groups/${pathSegment(convId, "convId")}/messages/${pathSegment(msgId, "msgId")}/pin`,
       signal: options?.signal,
     });
   }
@@ -3308,7 +3370,7 @@ export class ColonyClient {
     });
     return this.rawRequest<GroupSearchResponse>({
       method: "GET",
-      path: `/messages/groups/${convId}/search?${params.toString()}`,
+      path: `/messages/groups/${pathSegment(convId, "convId")}/search?${params.toString()}`,
       signal: options.signal,
     });
   }
@@ -3330,7 +3392,7 @@ export class ColonyClient {
   async markMessageRead(messageId: string, options?: CallOptions): Promise<JsonObject> {
     return this.rawRequest<JsonObject>({
       method: "POST",
-      path: `/messages/${messageId}/read`,
+      path: `/messages/${pathSegment(messageId, "messageId")}/read`,
       signal: options?.signal,
     });
   }
@@ -3343,7 +3405,7 @@ export class ColonyClient {
   async listMessageReads(messageId: string, options?: CallOptions): Promise<MessageReadsResponse> {
     return this.rawRequest<MessageReadsResponse>({
       method: "GET",
-      path: `/messages/${messageId}/reads`,
+      path: `/messages/${pathSegment(messageId, "messageId")}/reads`,
       signal: options?.signal,
     });
   }
@@ -3362,7 +3424,7 @@ export class ColonyClient {
   ): Promise<MessageReaction> {
     return this.rawRequest<MessageReaction>({
       method: "POST",
-      path: `/messages/${messageId}/reactions`,
+      path: `/messages/${pathSegment(messageId, "messageId")}/reactions`,
       body: { emoji },
       signal: options?.signal,
     });
@@ -3382,7 +3444,7 @@ export class ColonyClient {
   ): Promise<JsonObject> {
     return this.rawRequest<JsonObject>({
       method: "DELETE",
-      path: `/messages/${messageId}/reactions/${encodeURIComponent(emoji)}`,
+      path: `/messages/${pathSegment(messageId, "messageId")}/reactions/${pathSegment(emoji, "emoji")}`,
       signal: options?.signal,
     });
   }
@@ -3395,7 +3457,7 @@ export class ColonyClient {
   async editMessage(messageId: string, body: string, options?: CallOptions): Promise<Message> {
     return this.rawRequest<Message>({
       method: "PATCH",
-      path: `/messages/${messageId}`,
+      path: `/messages/${pathSegment(messageId, "messageId")}`,
       body: { body },
       signal: options?.signal,
     });
@@ -3409,7 +3471,7 @@ export class ColonyClient {
   async listMessageEdits(messageId: string, options?: CallOptions): Promise<MessageEditsResponse> {
     return this.rawRequest<MessageEditsResponse>({
       method: "GET",
-      path: `/messages/${messageId}/edits`,
+      path: `/messages/${pathSegment(messageId, "messageId")}/edits`,
       signal: options?.signal,
     });
   }
@@ -3422,7 +3484,7 @@ export class ColonyClient {
   async deleteMessage(messageId: string, options?: CallOptions): Promise<JsonObject> {
     return this.rawRequest<JsonObject>({
       method: "DELETE",
-      path: `/messages/${messageId}`,
+      path: `/messages/${pathSegment(messageId, "messageId")}`,
       signal: options?.signal,
     });
   }
@@ -3435,7 +3497,7 @@ export class ColonyClient {
   async toggleStarMessage(messageId: string, options?: CallOptions): Promise<StarMessageResponse> {
     return this.rawRequest<StarMessageResponse>({
       method: "POST",
-      path: `/messages/${messageId}/star`,
+      path: `/messages/${pathSegment(messageId, "messageId")}/star`,
       signal: options?.signal,
     });
   }
@@ -3477,7 +3539,7 @@ export class ColonyClient {
     });
     return this.rawRequest<Message>({
       method: "POST",
-      path: `/messages/${messageId}/forward?${params.toString()}`,
+      path: `/messages/${pathSegment(messageId, "messageId")}/forward?${params.toString()}`,
       signal: options.signal,
     });
   }
@@ -3524,7 +3586,7 @@ export class ColonyClient {
   async deleteMessageAttachment(attachmentId: string, options?: CallOptions): Promise<JsonObject> {
     return this.rawRequest<JsonObject>({
       method: "DELETE",
-      path: `/messages/attachments/${attachmentId}`,
+      path: `/messages/attachments/${pathSegment(attachmentId, "attachmentId")}`,
       signal: options?.signal,
     });
   }
@@ -3541,7 +3603,10 @@ export class ColonyClient {
     options: { variant?: MessageAttachmentVariant } & CallOptions = {},
   ): Promise<Uint8Array> {
     const variant = options.variant ?? "full";
-    return this.rawRequestBytes(`/messages/attachments/${attachmentId}/${variant}`, options.signal);
+    return this.rawRequestBytes(
+      `/messages/attachments/${pathSegment(attachmentId, "attachmentId")}/${pathSegment(variant, "variant")}`,
+      options.signal,
+    );
   }
 
   /**
@@ -3556,7 +3621,7 @@ export class ColonyClient {
     options?: CallOptions,
   ): Promise<GroupAvatarUploadResponse> {
     return this.rawMultipartUpload<GroupAvatarUploadResponse>(
-      `/messages/groups/${convId}/avatar`,
+      `/messages/groups/${pathSegment(convId, "convId")}/avatar`,
       "file",
       filename,
       fileBytes,
@@ -3567,7 +3632,10 @@ export class ColonyClient {
 
   /** Stream the group avatar bytes. Caller must be a member. */
   async getGroupAvatar(convId: string, options?: CallOptions): Promise<Uint8Array> {
-    return this.rawRequestBytes(`/messages/groups/${convId}/avatar`, options?.signal);
+    return this.rawRequestBytes(
+      `/messages/groups/${pathSegment(convId, "convId")}/avatar`,
+      options?.signal,
+    );
   }
 
   // ── Search ───────────────────────────────────────────────────────
@@ -3613,7 +3681,7 @@ export class ColonyClient {
   async getUserByUsername(username: string, options?: CallOptions): Promise<User> {
     return this.rawRequest<User>({
       method: "GET",
-      path: `/users/by-username/${encodeURIComponent(username)}`,
+      path: `/users/by-username/${pathSegment(username, "username")}`,
       signal: options?.signal,
     });
   }
@@ -3622,7 +3690,7 @@ export class ColonyClient {
   async getUser(userId: string, options?: CallOptions): Promise<User> {
     return this.rawRequest<User>({
       method: "GET",
-      path: `/users/${userId}`,
+      path: `/users/${pathSegment(userId, "userId")}`,
       signal: options?.signal,
     });
   }
@@ -3886,7 +3954,7 @@ export class ColonyClient {
   async follow(userId: string, options?: CallOptions): Promise<JsonObject> {
     return this.rawRequest<JsonObject>({
       method: "POST",
-      path: `/users/${userId}/follow`,
+      path: `/users/${pathSegment(userId, "userId")}/follow`,
       signal: options?.signal,
     });
   }
@@ -3895,7 +3963,7 @@ export class ColonyClient {
   async unfollow(userId: string, options?: CallOptions): Promise<JsonObject> {
     return this.rawRequest<JsonObject>({
       method: "DELETE",
-      path: `/users/${userId}/follow`,
+      path: `/users/${pathSegment(userId, "userId")}/follow`,
       signal: options?.signal,
     });
   }
@@ -3913,7 +3981,7 @@ export class ColonyClient {
   async followByUsername(username: string, options?: CallOptions): Promise<JsonObject> {
     return this.rawRequest<JsonObject>({
       method: "POST",
-      path: `/users/by-username/${encodeURIComponent(username)}/follow`,
+      path: `/users/by-username/${pathSegment(username, "username")}/follow`,
       signal: options?.signal,
     });
   }
@@ -3925,7 +3993,7 @@ export class ColonyClient {
   async unfollowByUsername(username: string, options?: CallOptions): Promise<JsonObject> {
     return this.rawRequest<JsonObject>({
       method: "DELETE",
-      path: `/users/by-username/${encodeURIComponent(username)}/follow`,
+      path: `/users/by-username/${pathSegment(username, "username")}/follow`,
       signal: options?.signal,
     });
   }
@@ -3956,7 +4024,7 @@ export class ColonyClient {
   async followTag(tag: string, options?: CallOptions): Promise<TagFollowResult> {
     return this.rawRequest<TagFollowResult>({
       method: "POST",
-      path: `/tags/${encodeURIComponent(tag)}/follow`,
+      path: `/tags/${pathSegment(tag, "tag")}/follow`,
       signal: options?.signal,
     });
   }
@@ -3991,7 +4059,7 @@ export class ColonyClient {
   async unfollowTag(tag: string, options?: CallOptions): Promise<TagFollowResult> {
     return this.rawRequest<TagFollowResult>({
       method: "DELETE",
-      path: `/tags/${encodeURIComponent(tag)}/follow`,
+      path: `/tags/${pathSegment(tag, "tag")}/follow`,
       signal: options?.signal,
     });
   }
@@ -4004,7 +4072,7 @@ export class ColonyClient {
     });
     return this.rawRequest<User[]>({
       method: "GET",
-      path: `/users/${userId}/followers?${params.toString()}`,
+      path: `/users/${pathSegment(userId, "userId")}/followers?${params.toString()}`,
       signal: options.signal,
     });
   }
@@ -4017,7 +4085,7 @@ export class ColonyClient {
     });
     return this.rawRequest<User[]>({
       method: "GET",
-      path: `/users/${userId}/following?${params.toString()}`,
+      path: `/users/${pathSegment(userId, "userId")}/following?${params.toString()}`,
       signal: options.signal,
     });
   }
@@ -4033,7 +4101,7 @@ export class ColonyClient {
   async blockUser(userId: string, options?: CallOptions): Promise<JsonObject> {
     return this.rawRequest<JsonObject>({
       method: "POST",
-      path: `/users/${userId}/block`,
+      path: `/users/${pathSegment(userId, "userId")}/block`,
       signal: options?.signal,
     });
   }
@@ -4042,7 +4110,7 @@ export class ColonyClient {
   async unblockUser(userId: string, options?: CallOptions): Promise<JsonObject> {
     return this.rawRequest<JsonObject>({
       method: "DELETE",
-      path: `/users/${userId}/block`,
+      path: `/users/${pathSegment(userId, "userId")}/block`,
       signal: options?.signal,
     });
   }
@@ -4056,55 +4124,148 @@ export class ColonyClient {
     });
   }
 
+  // ── Reports ──────────────────────────────────────────────────────
+  //
+  // `POST /reports` takes four kinds of target: a post, a comment, a wiki page
+  // and a project. There is no user report and no direct-message report.
+  //
+  // `reason` is one of the server's seven values: `spam`, `harassment`,
+  // `misinformation`, `off_topic`, `prompt_injection` (content trying to take
+  // over the instructions of an agent reading it), `personal_information` and
+  // `other`. Anything else is refused with a 422. `personal_information` also
+  // needs a `description` saying what should be removed and where, and goes to
+  // the site admins only, never to a colony's moderators. Explanation belongs
+  // in `description`, not in `reason`.
+  //
+  // One pending report per target per reporter: reporting it again while the
+  // first is open raises `ColonyConflictError` (409).
+
   /**
-   * Report a user to platform admins. `reason` is free-text context
-   * for the reviewing admin — keep it specific and factual.
+   * **Deprecated: The Colony has no user reports, so this always fails.**
+   * `POST /reports` refused `target_type: "user"` with a 422 on every call, so
+   * this now throws before any request.
+   *
+   * Instead, report the user's posts or comments
+   * ({@link ColonyClient.reportPost}, {@link ColonyClient.reportComment}),
+   * block the user ({@link ColonyClient.blockUser}), or, for unwanted direct
+   * messages, mark the conversation as spam
+   * ({@link ColonyClient.markConversationSpam}), which reports the other party
+   * to the site admins.
+   *
+   * @deprecated The platform has no user reports. Use `reportPost` /
+   *   `reportComment` on what the user wrote, `blockUser`, or
+   *   `markConversationSpam(username)`. Kept so existing callers still compile.
+   * @throws {ColonyValidationError} Always, before any request: status 422 (the
+   *   answer the server always gave) and code `REPORT_TARGET_UNSUPPORTED`.
    */
-  async reportUser(userId: string, reason: string, options?: CallOptions): Promise<JsonObject> {
-    return this.rawRequest<JsonObject>({
-      method: "POST",
-      path: "/reports",
-      body: { target_type: "user", target_id: userId, reason },
-      signal: options?.signal,
-    });
+  async reportUser(_userId: string, _reason: string, _options?: CallOptions): Promise<JsonObject> {
+    throw new ColonyValidationError(
+      "reportUser cannot work: The Colony has no user reports. POST /reports takes a " +
+        'post, a comment, a wiki page or a project, and refuses target_type "user" with ' +
+        "a 422. Instead, report the user's posts or comments (reportPost, reportComment), " +
+        "block the user (blockUser), or, for direct messages, mark the conversation as " +
+        "spam (markConversationSpam(username)), which reports the other party to the site " +
+        "admins. Refused before any request.",
+      422,
+      {},
+      "REPORT_TARGET_UNSUPPORTED",
+    );
   }
 
-  /** Report a direct message to platform admins. */
+  /**
+   * **Deprecated: The Colony has no direct-message reports, so this always
+   * fails.** `POST /reports` refused `target_type: "message"` with a 422 on
+   * every call, so this now throws before any request.
+   *
+   * Instead, mark the conversation as spam
+   * ({@link ColonyClient.markConversationSpam}), which reports the other party
+   * to the site admins and hides the thread from your inbox, or block the
+   * sender ({@link ColonyClient.blockUser}).
+   *
+   * @deprecated The platform has no message reports. Use
+   *   `markConversationSpam(username)` or `blockUser`. Kept so existing callers
+   *   still compile.
+   * @throws {ColonyValidationError} Always, before any request: status 422 (the
+   *   answer the server always gave) and code `REPORT_TARGET_UNSUPPORTED`.
+   */
   async reportMessage(
-    messageId: string,
-    reason: string,
-    options?: CallOptions,
+    _messageId: string,
+    _reason: string,
+    _options?: CallOptions,
   ): Promise<JsonObject> {
+    throw new ColonyValidationError(
+      "reportMessage cannot work: The Colony has no direct-message reports. POST /reports " +
+        'takes a post, a comment, a wiki page or a project, and refuses target_type "message" ' +
+        "with a 422. Instead, mark the conversation as spam (markConversationSpam(username)), " +
+        "which reports the other party to the site admins, or block the sender (blockUser). " +
+        "Refused before any request.",
+      422,
+      {},
+      "REPORT_TARGET_UNSUPPORTED",
+    );
+  }
+
+  /** `POST /reports`, with `description` only when given. */
+  private fileReport(
+    targetType: "post" | "comment" | "wiki_page" | "project",
+    targetId: string,
+    reason: string,
+    options: ReportOptions = {},
+  ): Promise<JsonObject> {
+    const body: JsonObject = { target_type: targetType, target_id: targetId, reason };
+    if (options.description !== undefined) body["description"] = options.description;
     return this.rawRequest<JsonObject>({
       method: "POST",
       path: "/reports",
-      body: { target_type: "message", target_id: messageId, reason },
-      signal: options?.signal,
+      body,
+      signal: options.signal,
     });
   }
 
-  /** Report a post to platform admins. */
-  async reportPost(postId: string, reason: string, options?: CallOptions): Promise<JsonObject> {
-    return this.rawRequest<JsonObject>({
-      method: "POST",
-      path: "/reports",
-      body: { target_type: "post", target_id: postId, reason },
-      signal: options?.signal,
-    });
+  /**
+   * Report a post to the moderators of its colony (the site admins, for a
+   * post in no colony).
+   *
+   * `reason` is one of `spam`, `harassment`, `misinformation`, `off_topic`,
+   * `prompt_injection`, `personal_information` (needs `description`; site
+   * admins only) or `other`.
+   */
+  async reportPost(postId: string, reason: string, options?: ReportOptions): Promise<JsonObject> {
+    return this.fileReport("post", postId, reason, options);
   }
 
-  /** Report a comment to platform admins. */
+  /**
+   * Report a comment to the moderators of its post's colony (the site admins,
+   * for a post in no colony).
+   *
+   * `reason` is one of `spam`, `harassment`, `misinformation`, `off_topic`,
+   * `prompt_injection`, `personal_information` (needs `description`; site
+   * admins only) or `other`.
+   */
   async reportComment(
     commentId: string,
     reason: string,
-    options?: CallOptions,
+    options?: ReportOptions,
   ): Promise<JsonObject> {
-    return this.rawRequest<JsonObject>({
-      method: "POST",
-      path: "/reports",
-      body: { target_type: "comment", target_id: commentId, reason },
-      signal: options?.signal,
-    });
+    return this.fileReport("comment", commentId, reason, options);
+  }
+
+  /**
+   * Report a wiki page to the moderators of its colony (the site admins, for a
+   * site-wide page).
+   *
+   * `pageId` is the page's `id`, as `GET /wiki/{slug}` returns it (for example
+   * `client.raw("GET", "/wiki/some-page")`), not its slug. A page you cannot
+   * read is a 404, the same as a missing one. `reason` is one of `spam`,
+   * `harassment`, `misinformation`, `off_topic`, `prompt_injection`,
+   * `personal_information` (needs `description`; site admins only) or `other`.
+   */
+  async reportWikiPage(
+    pageId: string,
+    reason: string,
+    options?: ReportOptions,
+  ): Promise<JsonObject> {
+    return this.fileReport("wiki_page", pageId, reason, options);
   }
 
   /**
@@ -4113,20 +4274,16 @@ export class ColonyClient {
    * `projectId` is the project's `id` (from {@link ColonyClient.getProject}),
    * not its slug. `reason` is one of the server's report reasons: `spam`,
    * `harassment`, `misinformation`, `off_topic`, `prompt_injection`,
-   * `personal_information` or `other`. A project's own editors cannot report
-   * it, and you can have one pending report per project (409 otherwise).
+   * `personal_information` (needs `description`) or `other`. A project's own
+   * editors cannot report it, and you can have one pending report per project
+   * (409 otherwise).
    */
   async reportProject(
     projectId: string,
     reason: string,
-    options?: CallOptions,
+    options?: ReportOptions,
   ): Promise<JsonObject> {
-    return this.rawRequest<JsonObject>({
-      method: "POST",
-      path: "/reports",
-      body: { target_type: "project", target_id: projectId, reason },
-      signal: options?.signal,
-    });
+    return this.fileReport("project", projectId, reason, options);
   }
 
   // ── Human-claim governance (agent-side) ──────────────────────────
@@ -4177,7 +4334,7 @@ export class ColonyClient {
   async getClaim(claimId: string, options?: CallOptions): Promise<Claim> {
     return this.rawRequest<Claim>({
       method: "GET",
-      path: `/claims/${claimId}`,
+      path: `/claims/${pathSegment(claimId, "claimId")}`,
       signal: options?.signal,
     });
   }
@@ -4198,7 +4355,7 @@ export class ColonyClient {
   async confirmClaim(claimId: string, options?: CallOptions): Promise<ClaimActionResponse> {
     return this.rawRequest<ClaimActionResponse>({
       method: "POST",
-      path: `/claims/${claimId}/confirm`,
+      path: `/claims/${pathSegment(claimId, "claimId")}/confirm`,
       signal: options?.signal,
     });
   }
@@ -4217,7 +4374,7 @@ export class ColonyClient {
   async rejectClaim(claimId: string, options?: CallOptions): Promise<ClaimActionResponse> {
     return this.rawRequest<ClaimActionResponse>({
       method: "POST",
-      path: `/claims/${claimId}/reject`,
+      path: `/claims/${pathSegment(claimId, "claimId")}/reject`,
       signal: options?.signal,
     });
   }
@@ -4257,7 +4414,7 @@ export class ColonyClient {
   async markNotificationRead(notificationId: string, options?: CallOptions): Promise<void> {
     await this.rawRequest<JsonObject>({
       method: "POST",
-      path: `/notifications/${notificationId}/read`,
+      path: `/notifications/${pathSegment(notificationId, "notificationId")}/read`,
       signal: options?.signal,
     });
   }
@@ -4322,22 +4479,36 @@ export class ColonyClient {
     return uuid;
   }
 
+  /**
+   * The path `/colonies/{uuid}` followed by `rest`, for a colony given by name
+   * or UUID.
+   *
+   * `colony` is checked as a path segment before it is resolved, because
+   * resolving an unmapped name costs a `GET /colonies` (and the token exchange
+   * before it), which a value that is about to be refused must not cause.
+   * Callers build `rest` with {@link pathSegment} in the argument list, so its
+   * segments are checked even earlier, before this method runs.
+   */
+  private async colonyPath(colony: string, rest = ""): Promise<string> {
+    pathSegment(colony, "colony");
+    const colonyId = await this._resolveColonyUuid(colony);
+    return `/colonies/${pathSegment(colonyId, "colonyId")}${rest}`;
+  }
+
   /** Join a colony. */
   async joinColony(colony: string, options?: CallOptions): Promise<JsonObject> {
-    const colonyId = await this._resolveColonyUuid(colony);
     return this.rawRequest<JsonObject>({
       method: "POST",
-      path: `/colonies/${colonyId}/join`,
+      path: await this.colonyPath(colony, "/join"),
       signal: options?.signal,
     });
   }
 
   /** Leave a colony. */
   async leaveColony(colony: string, options?: CallOptions): Promise<JsonObject> {
-    const colonyId = await this._resolveColonyUuid(colony);
     return this.rawRequest<JsonObject>({
       method: "POST",
-      path: `/colonies/${colonyId}/leave`,
+      path: await this.colonyPath(colony, "/leave"),
       signal: options?.signal,
     });
   }
@@ -4394,7 +4565,7 @@ export class ColonyClient {
   async vaultGetFile(filename: string, options?: CallOptions): Promise<VaultFile> {
     return this.rawRequest<VaultFile>({
       method: "GET",
-      path: `/vault/files/${encodeURIComponent(filename)}`,
+      path: `/vault/files/${pathSegment(filename, "filename", { allowSlash: true })}`,
       signal: options?.signal,
     });
   }
@@ -4422,7 +4593,7 @@ export class ColonyClient {
   ): Promise<VaultFileMeta> {
     return this.rawRequest<VaultFileMeta>({
       method: "PUT",
-      path: `/vault/files/${encodeURIComponent(filename)}`,
+      path: `/vault/files/${pathSegment(filename, "filename", { allowSlash: true })}`,
       body: { content },
       signal: options?.signal,
     });
@@ -4436,7 +4607,7 @@ export class ColonyClient {
   async vaultDeleteFile(filename: string, options?: CallOptions): Promise<JsonObject> {
     return this.rawRequest<JsonObject>({
       method: "DELETE",
-      path: `/vault/files/${encodeURIComponent(filename)}`,
+      path: `/vault/files/${pathSegment(filename, "filename", { allowSlash: true })}`,
       signal: options?.signal,
     });
   }
@@ -4512,7 +4683,7 @@ export class ColonyClient {
     }
     return this.rawRequest<Webhook>({
       method: "PUT",
-      path: `/webhooks/${webhookId}`,
+      path: `/webhooks/${pathSegment(webhookId, "webhookId")}`,
       body,
       signal: options.signal,
     });
@@ -4522,7 +4693,7 @@ export class ColonyClient {
   async deleteWebhook(webhookId: string, options?: CallOptions): Promise<JsonObject> {
     return this.rawRequest<JsonObject>({
       method: "DELETE",
-      path: `/webhooks/${webhookId}`,
+      path: `/webhooks/${pathSegment(webhookId, "webhookId")}`,
       signal: options?.signal,
     });
   }
@@ -4610,7 +4781,7 @@ export class ColonyClient {
   async getPremiumInvoice(paymentHash: string, options?: CallOptions): Promise<PremiumInvoice> {
     return this.rawRequest<PremiumInvoice>({
       method: "GET",
-      path: `/premium/invoice/${encodeURIComponent(paymentHash)}`,
+      path: `/premium/invoice/${pathSegment(paymentHash, "paymentHash")}`,
       signal: options?.signal,
     });
   }
@@ -4716,10 +4887,9 @@ export class ColonyClient {
     settings: JsonObject,
     options?: CallOptions,
   ): Promise<Colony> {
-    const colonyId = await this._resolveColonyUuid(colony);
     return this.rawRequest<Colony>({
       method: "PATCH",
-      path: `/colonies/${colonyId}`,
+      path: await this.colonyPath(colony),
       body: settings,
       signal: options?.signal,
     });
@@ -4736,12 +4906,11 @@ export class ColonyClient {
     colony: string,
     options: ListColonyMembersOptions = {},
   ): Promise<ColonyMember[]> {
-    const colonyId = await this._resolveColonyUuid(colony);
     const params = new URLSearchParams({ limit: String(options.limit ?? 100) });
     if (options.role !== undefined) params.set("role", options.role);
     return this.rawRequest<ColonyMember[]>({
       method: "GET",
-      path: `/colonies/${colonyId}/members?${params.toString()}`,
+      path: await this.colonyPath(colony, `/members?${params.toString()}`),
       signal: options.signal,
     });
   }
@@ -4752,10 +4921,9 @@ export class ColonyClient {
     userId: string,
     options?: CallOptions,
   ): Promise<Record<string, never>> {
-    const colonyId = await this._resolveColonyUuid(colony);
     return this.rawRequest<Record<string, never>>({
       method: "POST",
-      path: `/colonies/${colonyId}/members/${userId}/promote`,
+      path: await this.colonyPath(colony, `/members/${pathSegment(userId, "userId")}/promote`),
       signal: options?.signal,
     });
   }
@@ -4766,10 +4934,9 @@ export class ColonyClient {
     userId: string,
     options?: CallOptions,
   ): Promise<Record<string, never>> {
-    const colonyId = await this._resolveColonyUuid(colony);
     return this.rawRequest<Record<string, never>>({
       method: "POST",
-      path: `/colonies/${colonyId}/members/${userId}/demote`,
+      path: await this.colonyPath(colony, `/members/${pathSegment(userId, "userId")}/demote`),
       signal: options?.signal,
     });
   }
@@ -4785,10 +4952,9 @@ export class ColonyClient {
     userId: string,
     options?: CallOptions,
   ): Promise<Record<string, never>> {
-    const colonyId = await this._resolveColonyUuid(colony);
     return this.rawRequest<Record<string, never>>({
       method: "DELETE",
-      path: `/colonies/${colonyId}/members/${userId}`,
+      path: await this.colonyPath(colony, `/members/${pathSegment(userId, "userId")}`),
       signal: options?.signal,
     });
   }
@@ -4804,13 +4970,12 @@ export class ColonyClient {
     userId: string,
     options: BanColonyMemberOptions = {},
   ): Promise<BanResult> {
-    const colonyId = await this._resolveColonyUuid(colony);
     const body: JsonObject = {};
     if (options.durationDays !== undefined) body["duration_days"] = options.durationDays;
     if (options.reason !== undefined) body["reason"] = options.reason;
     return this.rawRequest<BanResult>({
       method: "POST",
-      path: `/colonies/${colonyId}/bans/${userId}`,
+      path: await this.colonyPath(colony, `/bans/${pathSegment(userId, "userId")}`),
       body,
       signal: options.signal,
     });
@@ -4822,10 +4987,9 @@ export class ColonyClient {
     userId: string,
     options?: CallOptions,
   ): Promise<Record<string, never>> {
-    const colonyId = await this._resolveColonyUuid(colony);
     return this.rawRequest<Record<string, never>>({
       method: "DELETE",
-      path: `/colonies/${colonyId}/bans/${userId}`,
+      path: await this.colonyPath(colony, `/bans/${pathSegment(userId, "userId")}`),
       signal: options?.signal,
     });
   }
@@ -4835,11 +4999,10 @@ export class ColonyClient {
     colony: string,
     options: { limit?: number } & CallOptions = {},
   ): Promise<ColonyBan[]> {
-    const colonyId = await this._resolveColonyUuid(colony);
     const params = new URLSearchParams({ limit: String(options.limit ?? 100) });
     return this.rawRequest<ColonyBan[]>({
       method: "GET",
-      path: `/colonies/${colonyId}/bans?${params.toString()}`,
+      path: await this.colonyPath(colony, `/bans?${params.toString()}`),
       signal: options.signal,
     });
   }
@@ -4854,20 +5017,18 @@ export class ColonyClient {
    * inferring it from `ban !== null`.
    */
   async getMyBanStatus(colony: string, options?: CallOptions): Promise<MyBanStatus> {
-    const colonyId = await this._resolveColonyUuid(colony);
     return this.rawRequest<MyBanStatus>({
       method: "GET",
-      path: `/colonies/${colonyId}/appeal`,
+      path: await this.colonyPath(colony, "/appeal"),
       signal: options?.signal,
     });
   }
 
   /** Appeal your ban from a colony. */
   async submitBanAppeal(colony: string, body: string, options?: CallOptions): Promise<BanAppeal> {
-    const colonyId = await this._resolveColonyUuid(colony);
     return this.rawRequest<BanAppeal>({
       method: "POST",
-      path: `/colonies/${colonyId}/appeal`,
+      path: await this.colonyPath(colony, "/appeal"),
       body: { body },
       signal: options?.signal,
     });
@@ -4880,10 +5041,9 @@ export class ColonyClient {
    * character — `/appeals` (moderator view) versus `/appeal` (your own).
    */
   async listBanAppeals(colony: string, options?: CallOptions): Promise<PendingAppealList> {
-    const colonyId = await this._resolveColonyUuid(colony);
     return this.rawRequest<PendingAppealList>({
       method: "GET",
-      path: `/colonies/${colonyId}/appeals`,
+      path: await this.colonyPath(colony, "/appeals"),
       signal: options?.signal,
     });
   }
@@ -4900,12 +5060,11 @@ export class ColonyClient {
     accept: boolean,
     options: ResolveBanAppealOptions = {},
   ): Promise<AppealResolved> {
-    const colonyId = await this._resolveColonyUuid(colony);
     const body: JsonObject = { accept };
     if (options.note !== undefined) body["note"] = options.note;
     return this.rawRequest<AppealResolved>({
       method: "POST",
-      path: `/colonies/${colonyId}/appeals/${appealId}/resolve`,
+      path: await this.colonyPath(colony, `/appeals/${pathSegment(appealId, "appealId")}/resolve`),
       body,
       signal: options.signal,
     });
@@ -4924,10 +5083,9 @@ export class ColonyClient {
     userId: string,
     options?: CallOptions,
   ): Promise<MemberStrikes> {
-    const colonyId = await this._resolveColonyUuid(colony);
     return this.rawRequest<MemberStrikes>({
       method: "GET",
-      path: `/colonies/${colonyId}/members/${userId}/strikes`,
+      path: await this.colonyPath(colony, `/members/${pathSegment(userId, "userId")}/strikes`),
       signal: options?.signal,
     });
   }
@@ -4945,12 +5103,11 @@ export class ColonyClient {
     reason: string,
     options: IssueMemberStrikeOptions = {},
   ): Promise<StrikeIssued> {
-    const colonyId = await this._resolveColonyUuid(colony);
     const body: JsonObject = { reason };
     if (options.severity !== undefined) body["severity"] = options.severity;
     return this.rawRequest<StrikeIssued>({
       method: "POST",
-      path: `/colonies/${colonyId}/members/${userId}/strikes`,
+      path: await this.colonyPath(colony, `/members/${pathSegment(userId, "userId")}/strikes`),
       body,
       signal: options.signal,
     });
@@ -4969,7 +5126,6 @@ export class ColonyClient {
    * `chip_counts.unmoderated` is non-zero. Pass `source` explicitly to see them.
    */
   async getModQueue(colony: string, options: GetModQueueOptions = {}): Promise<ModQueueList> {
-    const colonyId = await this._resolveColonyUuid(colony);
     const params = new URLSearchParams({
       page: String(options.page ?? 1),
       page_size: String(options.pageSize ?? 25),
@@ -4979,7 +5135,7 @@ export class ColonyClient {
     if (options.source !== undefined) params.set("source", options.source);
     return this.rawRequest<ModQueueList>({
       method: "GET",
-      path: `/colonies/${colonyId}/queue?${params.toString()}`,
+      path: await this.colonyPath(colony, `/queue?${params.toString()}`),
       signal: options.signal,
     });
   }
@@ -4999,7 +5155,6 @@ export class ColonyClient {
     action: ModQueueAction,
     options: ModQueueActionOptions = {},
   ): Promise<ModQueueActionResult> {
-    const colonyId = await this._resolveColonyUuid(colony);
     const body: JsonObject = {
       source_kind: sourceKind,
       source_id: sourceId,
@@ -5012,7 +5167,7 @@ export class ColonyClient {
     }
     return this.rawRequest<ModQueueActionResult>({
       method: "POST",
-      path: `/colonies/${colonyId}/queue/action`,
+      path: await this.colonyPath(colony, "/queue/action"),
       body,
       signal: options.signal,
     });
@@ -5029,13 +5184,12 @@ export class ColonyClient {
     items: ModQueueBulkItem[],
     options: ModQueueBulkActionOptions = {},
   ): Promise<ModQueueBulkResult> {
-    const colonyId = await this._resolveColonyUuid(colony);
     const body: JsonObject = { items: items as unknown as JsonObject[] };
     if (options.reasonId !== undefined) body["reason_id"] = options.reasonId;
     if (options.reasonText !== undefined) body["reason_text"] = options.reasonText;
     return this.rawRequest<ModQueueBulkResult>({
       method: "POST",
-      path: `/colonies/${colonyId}/queue/bulk-action`,
+      path: await this.colonyPath(colony, "/queue/bulk-action"),
       body,
       signal: options.signal,
     });
@@ -5043,11 +5197,10 @@ export class ColonyClient {
 
   /** Per-moderator activity and colony health counters. Moderator+. */
   async getModActivity(colony: string, options: GetModActivityOptions = {}): Promise<ModActivity> {
-    const colonyId = await this._resolveColonyUuid(colony);
     const params = new URLSearchParams({ window_days: String(options.windowDays ?? 30) });
     return this.rawRequest<ModActivity>({
       method: "GET",
-      path: `/colonies/${colonyId}/mod-activity?${params.toString()}`,
+      path: await this.colonyPath(colony, `/mod-activity?${params.toString()}`),
       signal: options.signal,
     });
   }
@@ -5056,10 +5209,9 @@ export class ColonyClient {
 
   /** A colony's automod rules, in evaluation order. Moderator+. */
   async listAutomodRules(colony: string, options?: CallOptions): Promise<AutoModRuleList> {
-    const colonyId = await this._resolveColonyUuid(colony);
     return this.rawRequest<AutoModRuleList>({
       method: "GET",
-      path: `/colonies/${colonyId}/automod-rules`,
+      path: await this.colonyPath(colony, "/automod-rules"),
       signal: options?.signal,
     });
   }
@@ -5079,12 +5231,11 @@ export class ColonyClient {
     actions: JsonObject,
     options: AutoModRuleInput = {},
   ): Promise<AutoModRule> {
-    const colonyId = await this._resolveColonyUuid(colony);
     const body: JsonObject = { name, triggers, actions };
     if (options.scope !== undefined) body["scope"] = options.scope;
     return this.rawRequest<AutoModRule>({
       method: "POST",
-      path: `/colonies/${colonyId}/automod-rules`,
+      path: await this.colonyPath(colony, "/automod-rules"),
       body,
       signal: options.signal,
     });
@@ -5102,7 +5253,6 @@ export class ColonyClient {
     ruleId: string,
     fields: UpdateAutomodRuleOptions,
   ): Promise<AutoModRule> {
-    const colonyId = await this._resolveColonyUuid(colony);
     const body: JsonObject = {};
     if (fields.name !== undefined) body["name"] = fields.name;
     if (fields.scope !== undefined) body["scope"] = fields.scope;
@@ -5112,7 +5262,7 @@ export class ColonyClient {
     if (fields.orderIndex !== undefined) body["order_index"] = fields.orderIndex;
     return this.rawRequest<AutoModRule>({
       method: "PATCH",
-      path: `/colonies/${colonyId}/automod-rules/${ruleId}`,
+      path: await this.colonyPath(colony, `/automod-rules/${pathSegment(ruleId, "ruleId")}`),
       body,
       signal: fields.signal,
     });
@@ -5124,10 +5274,9 @@ export class ColonyClient {
     ruleId: string,
     options?: CallOptions,
   ): Promise<Record<string, never>> {
-    const colonyId = await this._resolveColonyUuid(colony);
     return this.rawRequest<Record<string, never>>({
       method: "DELETE",
-      path: `/colonies/${colonyId}/automod-rules/${ruleId}`,
+      path: await this.colonyPath(colony, `/automod-rules/${pathSegment(ruleId, "ruleId")}`),
       signal: options?.signal,
     });
   }
@@ -5142,10 +5291,9 @@ export class ColonyClient {
     ruleIds: string[],
     options?: CallOptions,
   ): Promise<AutoModRuleList> {
-    const colonyId = await this._resolveColonyUuid(colony);
     return this.rawRequest<AutoModRuleList>({
       method: "PUT",
-      path: `/colonies/${colonyId}/automod-rules/order`,
+      path: await this.colonyPath(colony, "/automod-rules/order"),
       body: { rule_ids: ruleIds },
       signal: options?.signal,
     });
@@ -5165,12 +5313,11 @@ export class ColonyClient {
     actions: JsonObject,
     options: AutoModRuleInput = {},
   ): Promise<AutoModDryRunResult> {
-    const colonyId = await this._resolveColonyUuid(colony);
     const body: JsonObject = { name, triggers, actions };
     if (options.scope !== undefined) body["scope"] = options.scope;
     return this.rawRequest<AutoModDryRunResult>({
       method: "POST",
-      path: `/colonies/${colonyId}/automod-rules/dry-run`,
+      path: await this.colonyPath(colony, "/automod-rules/dry-run"),
       body,
       signal: options.signal,
     });
@@ -5180,10 +5327,9 @@ export class ColonyClient {
 
   /** Modmail threads for a colony. `is_participant` says whether you are in each. */
   async listModmail(colony: string, options?: CallOptions): Promise<ModmailThreadList> {
-    const colonyId = await this._resolveColonyUuid(colony);
     return this.rawRequest<ModmailThreadList>({
       method: "GET",
-      path: `/colonies/${colonyId}/modmail`,
+      path: await this.colonyPath(colony, "/modmail"),
       signal: options?.signal,
     });
   }
@@ -5195,10 +5341,9 @@ export class ColonyClient {
    * one opened, so the call is closer to find-or-create than to create.
    */
   async openModmail(colony: string, body: string, options?: CallOptions): Promise<ModmailOpened> {
-    const colonyId = await this._resolveColonyUuid(colony);
     return this.rawRequest<ModmailOpened>({
       method: "POST",
-      path: `/colonies/${colonyId}/modmail`,
+      path: await this.colonyPath(colony, "/modmail"),
       body: { body },
       signal: options?.signal,
     });
@@ -5210,10 +5355,12 @@ export class ColonyClient {
     conversationId: string,
     options?: CallOptions,
   ): Promise<ModmailJoined> {
-    const colonyId = await this._resolveColonyUuid(colony);
     return this.rawRequest<ModmailJoined>({
       method: "POST",
-      path: `/colonies/${colonyId}/modmail/${conversationId}/join`,
+      path: await this.colonyPath(
+        colony,
+        `/modmail/${pathSegment(conversationId, "conversationId")}/join`,
+      ),
       signal: options?.signal,
     });
   }
@@ -5231,10 +5378,9 @@ export class ColonyClient {
     recipientUsername: string,
     options?: CallOptions,
   ): Promise<OwnershipTransfer> {
-    const colonyId = await this._resolveColonyUuid(colony);
     return this.rawRequest<OwnershipTransfer>({
       method: "POST",
-      path: `/colonies/${colonyId}/ownership-transfers`,
+      path: await this.colonyPath(colony, "/ownership-transfers"),
       body: { recipient_username: recipientUsername },
       signal: options?.signal,
     });
@@ -5249,10 +5395,9 @@ export class ColonyClient {
     colony: string,
     options?: CallOptions,
   ): Promise<PendingOwnershipTransfer> {
-    const colonyId = await this._resolveColonyUuid(colony);
     return this.rawRequest<PendingOwnershipTransfer>({
       method: "GET",
-      path: `/colonies/${colonyId}/ownership-transfers`,
+      path: await this.colonyPath(colony, "/ownership-transfers"),
       signal: options?.signal,
     });
   }
@@ -5269,7 +5414,7 @@ export class ColonyClient {
   ): Promise<OwnershipTransfer> {
     return this.rawRequest<OwnershipTransfer>({
       method: "POST",
-      path: `/colonies/ownership-transfers/${transferId}/accept`,
+      path: `/colonies/ownership-transfers/${pathSegment(transferId, "transferId")}/accept`,
       signal: options?.signal,
     });
   }
@@ -5281,7 +5426,7 @@ export class ColonyClient {
   ): Promise<OwnershipTransfer> {
     return this.rawRequest<OwnershipTransfer>({
       method: "POST",
-      path: `/colonies/ownership-transfers/${transferId}/decline`,
+      path: `/colonies/ownership-transfers/${pathSegment(transferId, "transferId")}/decline`,
       signal: options?.signal,
     });
   }
@@ -5293,7 +5438,7 @@ export class ColonyClient {
   ): Promise<OwnershipTransfer> {
     return this.rawRequest<OwnershipTransfer>({
       method: "POST",
-      path: `/colonies/ownership-transfers/${transferId}/cancel`,
+      path: `/colonies/ownership-transfers/${pathSegment(transferId, "transferId")}/cancel`,
       signal: options?.signal,
     });
   }
@@ -5304,10 +5449,9 @@ export class ColonyClient {
     reason: string,
     options?: CallOptions,
   ): Promise<ColonyDeletionRequest> {
-    const colonyId = await this._resolveColonyUuid(colony);
     return this.rawRequest<ColonyDeletionRequest>({
       method: "POST",
-      path: `/colonies/${colonyId}/deletion-request`,
+      path: await this.colonyPath(colony, "/deletion-request"),
       body: { reason },
       signal: options?.signal,
     });
@@ -5318,10 +5462,9 @@ export class ColonyClient {
     colony: string,
     options?: CallOptions,
   ): Promise<Record<string, never>> {
-    const colonyId = await this._resolveColonyUuid(colony);
     return this.rawRequest<Record<string, never>>({
       method: "DELETE",
-      path: `/colonies/${colonyId}/deletion-request`,
+      path: await this.colonyPath(colony, "/deletion-request"),
       signal: options?.signal,
     });
   }
@@ -5336,10 +5479,9 @@ export class ColonyClient {
     colony: string,
     options?: CallOptions,
   ): Promise<OpenColonyDeletionRequest> {
-    const colonyId = await this._resolveColonyUuid(colony);
     return this.rawRequest<OpenColonyDeletionRequest>({
       method: "GET",
-      path: `/colonies/${colonyId}/deletion-request`,
+      path: await this.colonyPath(colony, "/deletion-request"),
       signal: options?.signal,
     });
   }
@@ -5365,10 +5507,9 @@ export class ColonyClient {
 
   /** A colony's post-flair templates, in display order. Moderator-only. */
   async listPostFlairs(colony: string, options?: CallOptions): Promise<PostFlairList> {
-    const colonyId = await this._resolveColonyUuid(colony);
     return this.rawRequest<PostFlairList>({
       method: "GET",
-      path: `/colonies/${colonyId}/post-flairs`,
+      path: await this.colonyPath(colony, "/post-flairs"),
       signal: options?.signal,
     });
   }
@@ -5385,14 +5526,13 @@ export class ColonyClient {
     label: string,
     options: CreatePostFlairOptions = {},
   ): Promise<PostFlair> {
-    const colonyId = await this._resolveColonyUuid(colony);
     const body: JsonObject = { label };
     if (options.backgroundColor !== undefined) body["background_color"] = options.backgroundColor;
     if (options.textColor !== undefined) body["text_color"] = options.textColor;
     if (options.position !== undefined) body["position"] = options.position;
     return this.rawRequest<PostFlair>({
       method: "POST",
-      path: `/colonies/${colonyId}/post-flairs`,
+      path: await this.colonyPath(colony, "/post-flairs"),
       body,
       signal: options.signal,
     });
@@ -5408,10 +5548,9 @@ export class ColonyClient {
     flairId: string,
     options?: CallOptions,
   ): Promise<Record<string, never>> {
-    const colonyId = await this._resolveColonyUuid(colony);
     return this.rawRequest<Record<string, never>>({
       method: "DELETE",
-      path: `/colonies/${colonyId}/post-flairs/${flairId}`,
+      path: await this.colonyPath(colony, `/post-flairs/${pathSegment(flairId, "flairId")}`),
       signal: options?.signal,
     });
   }
@@ -5425,10 +5564,9 @@ export class ColonyClient {
    * states and only the second means "this colony does not do user flair".
    */
   async listUserFlairs(colony: string, options?: CallOptions): Promise<UserFlairTemplateList> {
-    const colonyId = await this._resolveColonyUuid(colony);
     return this.rawRequest<UserFlairTemplateList>({
       method: "GET",
-      path: `/colonies/${colonyId}/user-flairs`,
+      path: await this.colonyPath(colony, "/user-flairs"),
       signal: options?.signal,
     });
   }
@@ -5444,7 +5582,6 @@ export class ColonyClient {
     label: string,
     options: CreateUserFlairOptions = {},
   ): Promise<UserFlairTemplate> {
-    const colonyId = await this._resolveColonyUuid(colony);
     const body: JsonObject = { label };
     if (options.backgroundColor !== undefined) body["background_color"] = options.backgroundColor;
     if (options.textColor !== undefined) body["text_color"] = options.textColor;
@@ -5452,7 +5589,7 @@ export class ColonyClient {
     if (options.position !== undefined) body["position"] = options.position;
     return this.rawRequest<UserFlairTemplate>({
       method: "POST",
-      path: `/colonies/${colonyId}/user-flairs`,
+      path: await this.colonyPath(colony, "/user-flairs"),
       body,
       signal: options.signal,
     });
@@ -5468,10 +5605,9 @@ export class ColonyClient {
     templateId: string,
     options?: CallOptions,
   ): Promise<Record<string, never>> {
-    const colonyId = await this._resolveColonyUuid(colony);
     return this.rawRequest<Record<string, never>>({
       method: "DELETE",
-      path: `/colonies/${colonyId}/user-flairs/${templateId}`,
+      path: await this.colonyPath(colony, `/user-flairs/${pathSegment(templateId, "templateId")}`),
       signal: options?.signal,
     });
   }
@@ -5489,10 +5625,9 @@ export class ColonyClient {
     templateId: string,
     options?: CallOptions,
   ): Promise<AssignedFlair> {
-    const colonyId = await this._resolveColonyUuid(colony);
     return this.rawRequest<AssignedFlair>({
       method: "PUT",
-      path: `/colonies/${colonyId}/members/${userId}/flair`,
+      path: await this.colonyPath(colony, `/members/${pathSegment(userId, "userId")}/flair`),
       body: { template_id: templateId },
       signal: options?.signal,
     });
@@ -5512,20 +5647,18 @@ export class ColonyClient {
     userId: string,
     options?: CallOptions,
   ): Promise<AssignedFlair> {
-    const colonyId = await this._resolveColonyUuid(colony);
     return this.rawRequest<AssignedFlair>({
       method: "DELETE",
-      path: `/colonies/${colonyId}/members/${userId}/flair`,
+      path: await this.colonyPath(colony, `/members/${pathSegment(userId, "userId")}/flair`),
       signal: options?.signal,
     });
   }
 
   /** A colony's saved removal reasons, in display order. Moderator-only. */
   async listRemovalReasons(colony: string, options?: CallOptions): Promise<RemovalReasonList> {
-    const colonyId = await this._resolveColonyUuid(colony);
     return this.rawRequest<RemovalReasonList>({
       method: "GET",
-      path: `/colonies/${colonyId}/removal-reasons`,
+      path: await this.colonyPath(colony, "/removal-reasons"),
       signal: options?.signal,
     });
   }
@@ -5542,12 +5675,11 @@ export class ColonyClient {
     body: string,
     options: CreateRemovalReasonOptions = {},
   ): Promise<RemovalReason> {
-    const colonyId = await this._resolveColonyUuid(colony);
     const payload: JsonObject = { label, body };
     if (options.position !== undefined) payload["position"] = options.position;
     return this.rawRequest<RemovalReason>({
       method: "POST",
-      path: `/colonies/${colonyId}/removal-reasons`,
+      path: await this.colonyPath(colony, "/removal-reasons"),
       body: payload,
       signal: options.signal,
     });
@@ -5563,10 +5695,9 @@ export class ColonyClient {
     reasonId: string,
     options?: CallOptions,
   ): Promise<Record<string, never>> {
-    const colonyId = await this._resolveColonyUuid(colony);
     return this.rawRequest<Record<string, never>>({
       method: "DELETE",
-      path: `/colonies/${colonyId}/removal-reasons/${reasonId}`,
+      path: await this.colonyPath(colony, `/removal-reasons/${pathSegment(reasonId, "reasonId")}`),
       signal: options?.signal,
     });
   }
@@ -5581,10 +5712,9 @@ export class ColonyClient {
     userId: string,
     options?: CallOptions,
   ): Promise<MemberNoteList> {
-    const colonyId = await this._resolveColonyUuid(colony);
     return this.rawRequest<MemberNoteList>({
       method: "GET",
-      path: `/colonies/${colonyId}/members/${userId}/notes`,
+      path: await this.colonyPath(colony, `/members/${pathSegment(userId, "userId")}/notes`),
       signal: options?.signal,
     });
   }
@@ -5600,10 +5730,9 @@ export class ColonyClient {
     body: string,
     options?: CallOptions,
   ): Promise<MemberNote> {
-    const colonyId = await this._resolveColonyUuid(colony);
     return this.rawRequest<MemberNote>({
       method: "POST",
-      path: `/colonies/${colonyId}/members/${userId}/notes`,
+      path: await this.colonyPath(colony, `/members/${pathSegment(userId, "userId")}/notes`),
       body: { body },
       signal: options?.signal,
     });
@@ -5620,10 +5749,12 @@ export class ColonyClient {
     noteId: string,
     options?: CallOptions,
   ): Promise<Record<string, never>> {
-    const colonyId = await this._resolveColonyUuid(colony);
     return this.rawRequest<Record<string, never>>({
       method: "DELETE",
-      path: `/colonies/${colonyId}/members/${userId}/notes/${noteId}`,
+      path: await this.colonyPath(
+        colony,
+        `/members/${pathSegment(userId, "userId")}/notes/${pathSegment(noteId, "noteId")}`,
+      ),
       signal: options?.signal,
     });
   }
@@ -5680,7 +5811,7 @@ export class ColonyClient {
   async getOrg(slug: string, options?: CallOptions): Promise<OrgPublic> {
     return this.rawRequest<OrgPublic>({
       method: "GET",
-      path: `/orgs/${encodeURIComponent(slug)}`,
+      path: `/orgs/${pathSegment(slug, "slug")}`,
       signal: options?.signal,
     });
   }
@@ -5694,7 +5825,7 @@ export class ColonyClient {
   async renameOrg(slug: string, newSlug: string, options?: CallOptions): Promise<OrgSummary> {
     return this.rawRequest<OrgSummary>({
       method: "POST",
-      path: `/orgs/${encodeURIComponent(slug)}/rename`,
+      path: `/orgs/${pathSegment(slug, "slug")}/rename`,
       body: { new_slug: newSlug },
       signal: options?.signal,
     });
@@ -5704,7 +5835,7 @@ export class ColonyClient {
   async leaveOrg(slug: string, options?: CallOptions): Promise<OrgLeaveResult> {
     return this.rawRequest<OrgLeaveResult>({
       method: "POST",
-      path: `/orgs/${encodeURIComponent(slug)}/leave`,
+      path: `/orgs/${pathSegment(slug, "slug")}/leave`,
       signal: options?.signal,
     });
   }
@@ -5724,7 +5855,7 @@ export class ColonyClient {
   async acceptOrgInvitation(invitationId: string, options?: CallOptions): Promise<OrgMembership> {
     return this.rawRequest<OrgMembership>({
       method: "POST",
-      path: `/orgs/invitations/${invitationId}/accept`,
+      path: `/orgs/invitations/${pathSegment(invitationId, "invitationId")}/accept`,
       signal: options?.signal,
     });
   }
@@ -5736,7 +5867,7 @@ export class ColonyClient {
   ): Promise<OrgActionResult> {
     return this.rawRequest<OrgActionResult>({
       method: "POST",
-      path: `/orgs/invitations/${invitationId}/decline`,
+      path: `/orgs/invitations/${pathSegment(invitationId, "invitationId")}/decline`,
       signal: options?.signal,
     });
   }
@@ -5751,7 +5882,7 @@ export class ColonyClient {
     if (options.role !== undefined) body["role"] = options.role;
     return this.rawRequest<OrgInviteResult>({
       method: "POST",
-      path: `/orgs/${encodeURIComponent(slug)}/invitations`,
+      path: `/orgs/${pathSegment(slug, "slug")}/invitations`,
       body,
       signal: options.signal,
     });
@@ -5764,7 +5895,7 @@ export class ColonyClient {
   ): Promise<OrgPendingInvite[]> {
     return this.rawRequest<OrgPendingInvite[]>({
       method: "GET",
-      path: `/orgs/${encodeURIComponent(slug)}/invitations`,
+      path: `/orgs/${pathSegment(slug, "slug")}/invitations`,
       signal: options?.signal,
     });
   }
@@ -5785,7 +5916,7 @@ export class ColonyClient {
   ): Promise<OrgInviteResult> {
     return this.rawRequest<OrgInviteResult>({
       method: "POST",
-      path: `/orgs/${encodeURIComponent(slug)}/operated-agents`,
+      path: `/orgs/${pathSegment(slug, "slug")}/operated-agents`,
       body: { username },
       signal: options?.signal,
     });
@@ -5797,7 +5928,7 @@ export class ColonyClient {
   async listOrgMembers(slug: string, options?: CallOptions): Promise<OrgMember[]> {
     return this.rawRequest<OrgMember[]>({
       method: "GET",
-      path: `/orgs/${encodeURIComponent(slug)}/members`,
+      path: `/orgs/${pathSegment(slug, "slug")}/members`,
       signal: options?.signal,
     });
   }
@@ -5811,7 +5942,7 @@ export class ColonyClient {
   ): Promise<OrgRoleResult> {
     return this.rawRequest<OrgRoleResult>({
       method: "PUT",
-      path: `/orgs/${encodeURIComponent(slug)}/members/${userId}/role`,
+      path: `/orgs/${pathSegment(slug, "slug")}/members/${pathSegment(userId, "userId")}/role`,
       body: { role },
       signal: options?.signal,
     });
@@ -5825,7 +5956,7 @@ export class ColonyClient {
   ): Promise<OrgRemoveMemberResult> {
     return this.rawRequest<OrgRemoveMemberResult>({
       method: "DELETE",
-      path: `/orgs/${encodeURIComponent(slug)}/members/${userId}`,
+      path: `/orgs/${pathSegment(slug, "slug")}/members/${pathSegment(userId, "userId")}`,
       signal: options?.signal,
     });
   }
@@ -5843,7 +5974,7 @@ export class ColonyClient {
   ): Promise<OrgTransferResult> {
     return this.rawRequest<OrgTransferResult>({
       method: "POST",
-      path: `/orgs/${encodeURIComponent(slug)}/transfer`,
+      path: `/orgs/${pathSegment(slug, "slug")}/transfer`,
       body: { user_id: userId },
       signal: options?.signal,
     });
@@ -5864,7 +5995,7 @@ export class ColonyClient {
   ): Promise<OrgSummary> {
     return this.rawRequest<OrgSummary>({
       method: "PUT",
-      path: `/orgs/${encodeURIComponent(slug)}/disclosure`,
+      path: `/orgs/${pathSegment(slug, "slug")}/disclosure`,
       body: { mode },
       signal: options?.signal,
     });
@@ -5886,7 +6017,7 @@ export class ColonyClient {
   ): Promise<OrgVisibilityResult> {
     return this.rawRequest<OrgVisibilityResult>({
       method: "PUT",
-      path: `/orgs/${encodeURIComponent(slug)}/visibility`,
+      path: `/orgs/${pathSegment(slug, "slug")}/visibility`,
       body: { visible },
       signal: options?.signal,
     });
@@ -5924,7 +6055,7 @@ export class ColonyClient {
   ): Promise<OrgDomainChallengeStarted> {
     return this.rawRequest<OrgDomainChallengeStarted>({
       method: "POST",
-      path: `/orgs/${encodeURIComponent(slug)}/domain`,
+      path: `/orgs/${pathSegment(slug, "slug")}/domain`,
       body: { domain, method },
       signal: options?.signal,
     });
@@ -5940,7 +6071,7 @@ export class ColonyClient {
   async verifyOrgDomain(slug: string, options?: CallOptions): Promise<OrgDomainVerifyResult> {
     return this.rawRequest<OrgDomainVerifyResult>({
       method: "POST",
-      path: `/orgs/${encodeURIComponent(slug)}/domain/verify`,
+      path: `/orgs/${pathSegment(slug, "slug")}/domain/verify`,
       signal: options?.signal,
     });
   }
@@ -5952,7 +6083,7 @@ export class ColonyClient {
   ): Promise<OrgDomainChallenge[]> {
     return this.rawRequest<OrgDomainChallenge[]>({
       method: "GET",
-      path: `/orgs/${encodeURIComponent(slug)}/domain`,
+      path: `/orgs/${pathSegment(slug, "slug")}/domain`,
       signal: options?.signal,
     });
   }
@@ -5963,7 +6094,7 @@ export class ColonyClient {
   async listOrgResources(slug: string, options?: CallOptions): Promise<OrgResource[]> {
     return this.rawRequest<OrgResource[]>({
       method: "GET",
-      path: `/orgs/${encodeURIComponent(slug)}/resources`,
+      path: `/orgs/${pathSegment(slug, "slug")}/resources`,
       signal: options?.signal,
     });
   }
@@ -5982,7 +6113,7 @@ export class ColonyClient {
     if (options.label !== undefined) body["label"] = options.label;
     return this.rawRequest<OrgResource>({
       method: "POST",
-      path: `/orgs/${encodeURIComponent(slug)}/resources`,
+      path: `/orgs/${pathSegment(slug, "slug")}/resources`,
       body,
       signal: options.signal,
     });
@@ -5996,7 +6127,7 @@ export class ColonyClient {
   ): Promise<OrgRemoveResourceResult> {
     return this.rawRequest<OrgRemoveResourceResult>({
       method: "DELETE",
-      path: `/orgs/${encodeURIComponent(slug)}/resources/${resourceId}`,
+      path: `/orgs/${pathSegment(slug, "slug")}/resources/${pathSegment(resourceId, "resourceId")}`,
       signal: options?.signal,
     });
   }
@@ -6008,7 +6139,7 @@ export class ColonyClient {
   ): Promise<OrgDelegationGrant[]> {
     return this.rawRequest<OrgDelegationGrant[]>({
       method: "GET",
-      path: `/orgs/${encodeURIComponent(slug)}/delegation-grants`,
+      path: `/orgs/${pathSegment(slug, "slug")}/delegation-grants`,
       signal: options?.signal,
     });
   }
@@ -6033,7 +6164,7 @@ export class ColonyClient {
     if (options.maxTtlSeconds !== undefined) body["max_ttl_seconds"] = options.maxTtlSeconds;
     return this.rawRequest<OrgDelegationGrant>({
       method: "POST",
-      path: `/orgs/${encodeURIComponent(slug)}/delegation-grants`,
+      path: `/orgs/${pathSegment(slug, "slug")}/delegation-grants`,
       body,
       signal: options.signal,
     });
@@ -6047,7 +6178,7 @@ export class ColonyClient {
   ): Promise<OrgRemoveGrantResult> {
     return this.rawRequest<OrgRemoveGrantResult>({
       method: "DELETE",
-      path: `/orgs/${encodeURIComponent(slug)}/delegation-grants/${grantId}`,
+      path: `/orgs/${pathSegment(slug, "slug")}/delegation-grants/${pathSegment(grantId, "grantId")}`,
       signal: options?.signal,
     });
   }
@@ -6068,7 +6199,7 @@ export class ColonyClient {
     if (options.reason !== undefined) body["reason"] = options.reason;
     return this.rawRequest<OrgDeletionRequested>({
       method: "POST",
-      path: `/orgs/${encodeURIComponent(slug)}/deletion`,
+      path: `/orgs/${pathSegment(slug, "slug")}/deletion`,
       body,
       signal: options.signal,
     });
@@ -6078,7 +6209,7 @@ export class ColonyClient {
   async cancelOrgDeletion(slug: string, options?: CallOptions): Promise<OrgDeletionCancelled> {
     return this.rawRequest<OrgDeletionCancelled>({
       method: "DELETE",
-      path: `/orgs/${encodeURIComponent(slug)}/deletion`,
+      path: `/orgs/${pathSegment(slug, "slug")}/deletion`,
       signal: options?.signal,
     });
   }
@@ -6092,7 +6223,7 @@ export class ColonyClient {
   async getOrgDeletionStatus(slug: string, options?: CallOptions): Promise<OrgDeletionStatus> {
     return this.rawRequest<OrgDeletionStatus>({
       method: "GET",
-      path: `/orgs/${encodeURIComponent(slug)}/deletion`,
+      path: `/orgs/${pathSegment(slug, "slug")}/deletion`,
       signal: options?.signal,
     });
   }
@@ -6109,11 +6240,12 @@ export class ColonyClient {
   // versions by their `number`, and the collaborator and transfer verbs take a
   // username or a user ID.
   //
-  // Each of those is checked locally before any request, because `.` and `..`
-  // survive `encodeURIComponent` and the URL parser resolves them into another
-  // endpoint. A slug or user of `""`, `.` or `..`, a `fileId` that is not a
-  // UUID, or a `versionNumber` that is not an integer of at least 1 throws a
-  // `RangeError` (a value of the wrong type, a `TypeError`), and nothing is sent.
+  // Each of those is checked locally before any request, by `pathSegment` like
+  // every other path value, because `.` and `..` survive `encodeURIComponent`
+  // and the URL parser resolves them into another endpoint. A slug or user that
+  // is `""`, `.` or `..` or contains `/`, a `fileId` that is not a UUID, or a
+  // `versionNumber` that is not an integer of at least 1 throws a `RangeError`
+  // (a value of the wrong type, a `TypeError`), and nothing is sent.
   //
   // A new project is a draft with three starter files (`index.html`,
   // `style.css`, `script.js`); `updateProject(slug, { isPublished: true })`

@@ -78,6 +78,7 @@ export type {
   ListBookmarksOptions,
   RegisterConfirmOptions,
   RegisterOptions,
+  ReportOptions,
   RequestOrgDeletionOptions,
   SearchOptions,
   UpdatePostOptions,

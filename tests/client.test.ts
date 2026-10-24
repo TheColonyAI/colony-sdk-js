@@ -3106,32 +3106,14 @@ describe("safety / moderation", () => {
     expect(result).toMatchObject({ items: [] });
   });
 
-  it("reportUser posts /reports with target_type=user", async () => {
+  it("reportUser and reportMessage fail locally (the server has no such targets)", async () => {
+    // Both used to send target_type "user" / "message", which POST /reports
+    // refuses with a 422 every time. Full coverage in tests/reports.test.ts.
     const mock = new MockFetch();
-    withAuthToken(mock);
-    mock.json({ id: "rpt1", status: "received" });
     const client = makeClient(mock);
-    await client.reportUser("u1", "spam-bot impressions");
-    expect(mock.calls[1]?.method).toBe("POST");
-    expect(mock.calls[1]?.url).toContain("/reports");
-    expect(JSON.parse(mock.calls[1]?.body ?? "{}")).toEqual({
-      target_type: "user",
-      target_id: "u1",
-      reason: "spam-bot impressions",
-    });
-  });
-
-  it("reportMessage posts /reports with target_type=message", async () => {
-    const mock = new MockFetch();
-    withAuthToken(mock);
-    mock.json({ id: "rpt2", status: "received" });
-    const client = makeClient(mock);
-    await client.reportMessage("m1", "abusive");
-    expect(JSON.parse(mock.calls[1]?.body ?? "{}")).toEqual({
-      target_type: "message",
-      target_id: "m1",
-      reason: "abusive",
-    });
+    await expect(client.reportUser("u1", "spam")).rejects.toThrow(ColonyValidationError);
+    await expect(client.reportMessage("m1", "spam")).rejects.toThrow(ColonyValidationError);
+    expect(mock.calls).toHaveLength(0);
   });
 
   it("reportPost posts /reports with target_type=post", async () => {
@@ -3260,8 +3242,14 @@ describe("conversation spam (DM moderation)", () => {
       201,
     );
     const client = makeClient(mock);
-    await client.markConversationSpam("alice/bob");
-    expect(mock.calls[1]?.url).toContain("/messages/conversations/alice%2Fbob/spam");
+    await client.markConversationSpam("alice?bob");
+    expect(mock.calls[1]?.url).toContain("/messages/conversations/alice%3Fbob/spam");
+  });
+
+  it("markConversationSpam refuses a username containing a slash, sending nothing", async () => {
+    const mock = new MockFetch();
+    await expect(makeClient(mock).markConversationSpam("alice/bob")).rejects.toThrow(RangeError);
+    expect(mock.calls).toHaveLength(0);
   });
 
   it("unmarkConversationSpam sends DELETE to /messages/conversations/{username}/spam", async () => {
@@ -3787,7 +3775,13 @@ describe("conversation history + tail", () => {
     withAuthToken(mock);
     mock.json({ messages: [], pagination: {} });
     const client = makeClient(mock);
-    await client.conversationTail("a/b");
-    expect(mock.calls[1]?.url).toContain("/messages/conversations/a%2Fb/tail");
+    await client.conversationTail("a b#c");
+    expect(mock.calls[1]?.url).toContain("/messages/conversations/a%20b%23c/tail");
+  });
+
+  it("refuses a username containing a slash, sending nothing", async () => {
+    const mock = new MockFetch();
+    await expect(makeClient(mock).conversationTail("a/b")).rejects.toThrow(RangeError);
+    expect(mock.calls).toHaveLength(0);
   });
 });

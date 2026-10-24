@@ -231,15 +231,25 @@ describe("verb and path", () => {
     mock.json({});
     mock.json({});
     const client = makeClient(mock);
-    await client.getProjectFile("../admin", FILE_ID);
-    await client.transferProject("orbit-toy", "a/b");
+    await client.getProjectFile("orbit?admin", FILE_ID);
+    await client.transferProject("orbit-toy", "a#b");
 
     expect(new URL(requestAt(mock, 1).url ?? "").pathname).toBe(
-      `/api/v1/projects/..%2Fadmin/files/${FILE_ID}`,
+      `/api/v1/projects/orbit%3Fadmin/files/${FILE_ID}`,
     );
     expect(new URL(requestAt(mock, 2).url ?? "").pathname).toBe(
-      "/api/v1/projects/orbit-toy/transfer/a%2Fb",
+      "/api/v1/projects/orbit-toy/transfer/a%23b",
     );
+  });
+
+  it("refuses a slug or user containing a slash, sending nothing", async () => {
+    // Encoding a `/` as %2F does not keep it in its segment: the server
+    // decodes the path before routing.
+    const mock = new MockFetch();
+    const client = makeClient(mock);
+    await expect(client.getProjectFile("../admin", FILE_ID)).rejects.toThrow(RangeError);
+    await expect(client.transferProject("orbit-toy", "a/b")).rejects.toThrow(RangeError);
+    expect(mock.calls).toHaveLength(0);
   });
 });
 

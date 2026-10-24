@@ -73,11 +73,17 @@ describe("premium: verb and path", () => {
   it("percent-encodes the payment hash", async () => {
     const mock = withAuthToken(new MockFetch());
     mock.json({});
-    await makeClient(mock).getPremiumInvoice("../../admin");
+    await makeClient(mock).getPremiumInvoice("ab?cd#ef");
 
     expect(new URL(requestAt(mock, 1).url ?? "").pathname).toBe(
-      "/api/v1/premium/invoice/..%2F..%2Fadmin",
+      "/api/v1/premium/invoice/ab%3Fcd%23ef",
     );
+  });
+
+  it("refuses a payment hash containing a slash, sending nothing", async () => {
+    const mock = new MockFetch();
+    await expect(makeClient(mock).getPremiumInvoice("../../admin")).rejects.toThrow(RangeError);
+    expect(mock.calls).toHaveLength(0);
   });
 });
 

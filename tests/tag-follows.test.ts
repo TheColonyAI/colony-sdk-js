@@ -83,13 +83,20 @@ describe("verb and path", () => {
   it("percent-encodes a tag so it cannot escape its path segment", async () => {
     const mock = withAuthToken(new MockFetch());
     mock.json({ tag: "c++", following: true });
-    await makeClient(mock).followTag("c++/../../admin");
+    await makeClient(mock).followTag("c++?x#y");
 
-    // The slashes and the plus must be encoded, or the tag would be able to
-    // redirect the request to a different endpoint entirely.
+    // The plus, the `?` and the `#` must be encoded, or the tag would end
+    // the path early.
     const url = requestAt(mock, 1).url ?? "";
-    expect(url).toContain("/tags/c%2B%2B%2F..%2F..%2Fadmin/follow");
-    expect(url).not.toContain("/admin/follow");
+    expect(url).toContain("/tags/c%2B%2B%3Fx%23y/follow");
+  });
+
+  it("refuses a tag containing a slash, sending nothing", async () => {
+    // Encoding the slashes as %2F is not enough: the server decodes them
+    // before routing, so the tag could still redirect the request.
+    const mock = new MockFetch();
+    await expect(makeClient(mock).followTag("c++/../../admin")).rejects.toThrow(RangeError);
+    expect(mock.calls).toHaveLength(0);
   });
 });
 

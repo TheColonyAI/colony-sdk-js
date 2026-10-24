@@ -93,11 +93,19 @@ describe("separation from the by-id methods", () => {
   it("percent-encodes the handle so it cannot escape its path segment", async () => {
     const mock = withAuthToken(new MockFetch());
     mock.json({});
-    await makeClient(mock).getUserByUsername("../../admin");
+    await makeClient(mock).getUserByUsername("a?b#c d");
 
     expect(new URL(requestAt(mock, 1).url ?? "").pathname).toBe(
-      "/api/v1/users/by-username/..%2F..%2Fadmin",
+      "/api/v1/users/by-username/a%3Fb%23c%20d",
     );
+  });
+
+  it("refuses a handle containing a slash, with no request at all", async () => {
+    // An encoded `%2F` is not enough: the server decodes it back to `/`
+    // before routing, so "../../admin" would leave its segment.
+    const mock = new MockFetch();
+    await expect(makeClient(mock).getUserByUsername("../../admin")).rejects.toThrow(RangeError);
+    expect(mock.calls).toHaveLength(0);
   });
 });
 
