@@ -245,11 +245,17 @@ describe("request bodies", () => {
   it("percent-encodes the slug so it cannot escape its path segment", async () => {
     const mock = withAuthToken(new MockFetch());
     mock.json({});
-    await makeClient(mock).getOrg("../../admin");
+    await makeClient(mock).getOrg("acme?x#y");
 
     const url = requestAt(mock, 1).url ?? "";
-    expect(url).toContain("%2F");
-    expect(new URL(url).pathname).toBe("/api/v1/orgs/..%2F..%2Fadmin");
+    expect(new URL(url).pathname).toBe("/api/v1/orgs/acme%3Fx%23y");
+  });
+
+  it("refuses a slug containing a slash, sending nothing", async () => {
+    // Encoding it as %2F is not enough: the server decodes it before routing.
+    const mock = new MockFetch();
+    await expect(makeClient(mock).getOrg("../../admin")).rejects.toThrow(RangeError);
+    expect(mock.calls).toHaveLength(0);
   });
 });
 
