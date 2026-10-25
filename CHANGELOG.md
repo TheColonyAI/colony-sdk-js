@@ -10,6 +10,8 @@ the minor version.
 
 ## Unreleased
 
+## 0.21.0 — 2026-10-25
+
 ### Security
 
 - **Every caller-supplied value in a request path now goes through one check, `pathSegment`.** Before, 142 methods put a caller's value into a path unguarded. 44 percent-encoded it, which leaves `.` and `..` alone: the org slug in 24 org methods, the username in 13 (`getUserByUsername`, `conversationHistory`, …), the vault filename in 3, the tag in `followTag` and `unfollowTag`, the emoji in `removeMessageReaction` and the payment hash in `getPremiumInvoice`. 103 interpolated it raw: the username in `sendMessage` and `getConversation`, and every id (`postId` in 24 methods, `userId` in 23, `convId` in 20, `messageId` in 9, `commentId` in 5, and `claimId`, `transferId`, `attachmentId`, `webhookId`, `ruleId`, `invitationId`, `msgId`, `grantId`, `resourceId`, `flairId`, `templateId`, `noteId`, `reasonId`, `appealId`, `notificationId`, `conversationId`, and the attachment `variant`). The URL parser resolves `.` and `..`, so `getPost("..")` sent an authenticated `GET /api/v1/`, and a raw `/` left the segment outright: `getPost("x/comments")` reached `GET /posts/x/comments`. An agent passing on a value it read from content (a post id, a username, an org slug) could be steered to a different endpoint, with its own token.
