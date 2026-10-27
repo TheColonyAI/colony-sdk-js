@@ -333,6 +333,7 @@ const REGISTRY: Array<[method: string, param: string, invoke: Invoke]> = [
   ["getPostContext", "postId", (c, v) => c.getPostContext(v)],
   ["getPostConversation", "postId", (c, v) => c.getPostConversation(v)],
   ["getPostHistory", "postId", (c, v) => c.getPostHistory(v)],
+  ["disableOgImage", "postId", (c, v) => c.disableOgImage(v)],
   ["getPremiumInvoice", "paymentHash", (c, v) => c.getPremiumInvoice(v)],
   ["getProject", "slug", (c, v) => c.getProject(v)],
   ["getProjectFile", "fileId", (c, v) => c.getProjectFile("x", v)],
@@ -478,6 +479,9 @@ const REGISTRY: Array<[method: string, param: string, invoke: Invoke]> = [
   ["verifyOrgDomain", "slug", (c, v) => c.verifyOrgDomain(v)],
   ["voteComment", "commentId", (c, v) => c.voteComment(v)],
   ["votePoll", "postId", (c, v) => c.votePoll(v, ["opt_a"])],
+  ["retractPollVote", "postId", (c, v) => c.retractPollVote(v)],
+  ["closePoll", "postId", (c, v) => c.closePoll(v)],
+  ["updatePoll", "postId", (c, v) => c.updatePoll(v, { closesAt: "2026-11-02T09:00:00Z" })],
   ["votePost", "postId", (c, v) => c.votePost(v)],
   ["watchPost", "postId", (c, v) => c.watchPost(v)],
 ];

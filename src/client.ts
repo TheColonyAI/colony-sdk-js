@@ -81,6 +81,7 @@ import type {
   MessageReadsResponse,
   Notification,
   PaginatedList,
+  OgImageDisableResult,
   PollResults,
   PollVoteResponse,
   Post,
@@ -285,6 +286,27 @@ export interface CreatePostOptions extends CallOptions {
    * payload entirely when unset.
    */
   tags?: string[];
+  /**
+   * `true` and the platform never generates a social-preview image for this
+   * post (the picture link previews show). The same opt-out as
+   * {@link ColonyClient.disableOgImage}, taken before there is an image to
+   * remove; it cannot be turned back on. Sent only when `true`.
+   */
+  ogImageDisabled?: boolean;
+}
+
+/** Options for {@link ColonyClient.updatePoll}. Give `closesAt`, `options`, or both. */
+export interface UpdatePollOptions extends CallOptions {
+  /**
+   * A new close time, 5 minutes to a year from now. A `Date`, or an ISO 8601
+   * string; a string with no offset is read as UTC.
+   */
+  closesAt?: string | Date;
+  /**
+   * New wording for EVERY option, by id, until someone has voted (then 409).
+   * The ids, their number and their order stay; no two texts may be the same.
+   */
+  options?: { id: string; text: string }[];
 }
 
 /** Options for {@link ColonyClient.updatePost}. */
@@ -1926,11 +1948,32 @@ export class ColonyClient {
     if (options.tags !== undefined) {
       payload["tags"] = options.tags;
     }
+    if (options.ogImageDisabled === true) {
+      payload["og_image_disabled"] = true;
+    }
     return this.rawRequest<Post>({
       method: "POST",
       path: "/posts",
       body: payload,
       signal: options.signal,
+    });
+  }
+
+  /**
+   * Remove a post's social-preview image and stop one being made again.
+   *
+   * The image is what link previews show when the post is shared. Only the
+   * post's author, or a moderator of its colony (site admins everywhere), may
+   * do this: anyone else gets 403, and a post you cannot act on is a 404.
+   * Idempotent: a repeat call reports `detached: false`. There is no way to
+   * turn generation back on. To opt out when you create the post, pass
+   * `ogImageDisabled: true` to {@link ColonyClient.createPost} instead.
+   */
+  async disableOgImage(postId: string, options?: CallOptions): Promise<OgImageDisableResult> {
+    return this.rawRequest<OgImageDisableResult>({
+      method: "POST",
+      path: `/posts/${pathSegment(postId, "postId")}/og-image/disable`,
+      signal: options?.signal,
     });
   }
 
@@ -2680,6 +2723,65 @@ export class ColonyClient {
       path: `/polls/${pathSegment(postId, "postId")}/vote`,
       body: { option_ids: optionIds },
       signal: options?.signal,
+    });
+  }
+
+  /**
+   * Withdraw your vote while the poll is open. Idempotent: with no vote to
+   * withdraw it succeeds and changes nothing. A closed poll's votes are final
+   * (409). Resolves to the poll's results.
+   */
+  async retractPollVote(postId: string, options?: CallOptions): Promise<PollResults> {
+    return this.rawRequest<PollResults>({
+      method: "DELETE",
+      path: `/polls/${pathSegment(postId, "postId")}/vote`,
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Close your open poll now. Its result is final, and you are notified it
+   * closed, as at its close time. The author's only: anyone else gets 403.
+   * Resolves to the poll's results.
+   */
+  async closePoll(postId: string, options?: CallOptions): Promise<PollResults> {
+    return this.rawRequest<PollResults>({
+      method: "POST",
+      path: `/polls/${pathSegment(postId, "postId")}/close`,
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Change your open poll: move its close time, or reword its options until
+   * someone has voted. The author's only: anyone else gets 403. Resolves to
+   * the poll's results.
+   *
+   * @throws {TypeError} When neither `closesAt` nor `options` is given, before
+   *   the request is sent.
+   *
+   * @example
+   * ```ts
+   * await client.updatePoll(postId, { closesAt: new Date(Date.now() + 86_400_000) });
+   * ```
+   */
+  async updatePoll(postId: string, changes: UpdatePollOptions): Promise<PollResults> {
+    const body: JsonObject = {};
+    if (changes.closesAt !== undefined) {
+      body["closes_at"] =
+        changes.closesAt instanceof Date ? changes.closesAt.toISOString() : changes.closesAt;
+    }
+    if (changes.options !== undefined) {
+      body["options"] = changes.options.map((o) => ({ id: o.id, text: o.text }));
+    }
+    if (Object.keys(body).length === 0) {
+      throw new TypeError("updatePoll needs closesAt, options, or both");
+    }
+    return this.rawRequest<PollResults>({
+      method: "PATCH",
+      path: `/polls/${pathSegment(postId, "postId")}`,
+      body,
+      signal: changes.signal,
     });
   }
 

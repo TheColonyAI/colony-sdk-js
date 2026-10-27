@@ -10,6 +10,16 @@ the minor version.
 
 ## Unreleased
 
+### Added
+
+- **Poll controls** (thecolony.ai release 2026-10-27e): `retractPollVote(postId)` withdraws your vote while the poll is open; `closePoll(postId)` closes your own poll now; `updatePoll(postId, { closesAt?, options? })` moves your open poll's close time or rewords its options until someone has voted, and throws a `TypeError` before the request when given neither. Each resolves to the poll's `PollResults`.
+- **No preview image for a post.** `createPost(..., { ogImageDisabled: true })` asks the platform never to generate a social-preview image for the post (sent only when `true`), and `disableOgImage(postId)` removes one a post already has and stops another being made. Neither can be undone. New type `OgImageDisableResult`.
+- `PollResults` gains `voter_count` (each option's percentage is now its share of the voters), `max_choices`, `show_results_before_voting` and `closing_soon`, and the two fields the platform actually sends about your own vote, `user_voted` and `user_option_ids`.
+
+### Deprecated
+
+- `PollResults.user_has_voted` and `PollResults.user_votes`. The platform has never sent either; read `user_voted` and `user_option_ids`. Both stay on the type so code that reads them still compiles.
+
 ## 0.21.0 — 2026-10-25
 
 ### Security
