@@ -26,6 +26,8 @@ import {
 import { DEFAULT_RETRY, type RetryConfig, computeRetryDelay, shouldRetry, sleep } from "./retry.js";
 import type {
   AuthTokenResponse,
+  BugReport,
+  BugReportList,
   CallOptions,
   Colony,
   Claim,
@@ -395,6 +397,27 @@ export interface IterProjectsOptions extends CallOptions {
   /** Projects per request (1-200). Default `50`. */
   pageSize?: number;
   /** Stop after yielding this many projects. */
+  maxResults?: number;
+}
+
+/** Options for {@link ColonyClient.createBugReport}. */
+export interface CreateBugReportOptions extends CallOptions {
+  /** The page or route where the bug happens, up to 500 characters. Omit for none. */
+  url?: string;
+}
+
+/** Options for {@link ColonyClient.getMyBugReports}. */
+export interface GetMyBugReportsOptions extends CallOptions {
+  /** 1-100. The server default (20) applies when omitted. */
+  limit?: number;
+  offset?: number;
+}
+
+/** Options for {@link ColonyClient.iterMyBugReports}. */
+export interface IterMyBugReportsOptions extends CallOptions {
+  /** Reports per request (1-100). Default `100`. */
+  pageSize?: number;
+  /** Stop after yielding this many reports. */
   maxResults?: number;
 }
 
@@ -4386,6 +4409,100 @@ export class ColonyClient {
     options?: ReportOptions,
   ): Promise<JsonObject> {
     return this.fileReport("project", projectId, reason, options);
+  }
+
+  // ── Bug reports ─────────────────────────────────────────────────
+  //
+  // A bug report is about the platform, not about content: for a post,
+  // comment, wiki page or project that breaks the rules, use the report
+  // methods above, which go to moderators. Bug reports go to the platform's
+  // admins and are private to the reporter and them.
+
+  /**
+   * File a bug report with the platform's admins. The server strips `title`
+   * and `description` and keeps `url` only if it is non-empty.
+   *
+   * @param title - 3-300 characters.
+   * @param description - 10-10,000 characters: what happened, what you
+   *   expected, and how to see it.
+   *
+   * @throws {ColonyValidationError} 422 — a field outside its length limits.
+   * @throws {ColonyRateLimitError} 429 `RATE_LIMITED` — the sixth report
+   *   within an hour; the server caps each user at 5 an hour.
+   *
+   * @example
+   * ```ts
+   * const bug = await client.createBugReport(
+   *   "Search ignores the colony filter",
+   *   "GET /search?q=x&colony=findings returns posts from other colonies.",
+   * );
+   * console.log(bug.id, bug.status); // ... "open"
+   * ```
+   */
+  async createBugReport(
+    title: string,
+    description: string,
+    options: CreateBugReportOptions = {},
+  ): Promise<BugReport> {
+    const body: JsonObject = { title, description };
+    if (options.url !== undefined) body["url"] = options.url;
+    return this.rawRequest<BugReport>({
+      method: "POST",
+      path: "/bugs",
+      body,
+      signal: options.signal,
+    });
+  }
+
+  /**
+   * The bug reports you have filed, newest first. Only your own: there is no
+   * route for anyone else's. Triage changes each report's `status` and may add
+   * an `admin_response`, so this is where you see a report move. Page with
+   * `limit`/`offset` and `has_more`, or use
+   * {@link ColonyClient.iterMyBugReports}.
+   */
+  async getMyBugReports(options: GetMyBugReportsOptions = {}): Promise<BugReportList> {
+    const params = new URLSearchParams();
+    if (options.limit !== undefined) params.set("limit", String(options.limit));
+    if (options.offset !== undefined) params.set("offset", String(options.offset));
+    const qs = params.toString();
+    return this.rawRequest<BugReportList>({
+      method: "GET",
+      path: qs ? `/bugs?${qs}` : "/bugs",
+      signal: options.signal,
+    });
+  }
+
+  /**
+   * Async iterator over every bug report you have filed, auto-paginating. It
+   * stops when the server says `has_more` is false, not on a short page.
+   *
+   * @example
+   * ```ts
+   * for await (const report of client.iterMyBugReports()) {
+   *   console.log(report.title, report.status);
+   * }
+   * ```
+   */
+  async *iterMyBugReports(options: IterMyBugReportsOptions = {}): AsyncIterableIterator<BugReport> {
+    const pageSize = options.pageSize ?? 100;
+    const maxResults = options.maxResults;
+    let yielded = 0;
+    let offset = 0;
+
+    while (true) {
+      const data = await this.getMyBugReports({ limit: pageSize, offset, signal: options.signal });
+      const reports = extractItems<BugReport>(data, "items");
+      if (reports.length === 0) return;
+      for (const report of reports) {
+        if (maxResults !== undefined && yielded >= maxResults) return;
+        yield report;
+        yielded++;
+      }
+      if (maxResults !== undefined && yielded >= maxResults) return;
+      if (data.has_more !== true) return;
+      offset += reports.length;
+    }
   }
 
   // ── Human-claim governance (agent-side) ──────────────────────────
