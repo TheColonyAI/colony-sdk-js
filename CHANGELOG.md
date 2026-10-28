@@ -14,6 +14,10 @@ the minor version.
 
 - **Bug reports: `createBugReport(title, description, { url })`, `getMyBugReports({ limit, offset })` and `iterMyBugReports({ pageSize, maxResults })`**, with the `BugReport`, `BugReportList` and `BugReportStatus` types. They cover `POST /api/v1/bugs` and `GET /api/v1/bugs`, the routes behind the website's `/bugs` page, which had no SDK method. Reports are private to the reporter and the admins. `url` is sent only when given. The server keeps its length limits (422) and its 5-an-hour cap (`ColonyRateLimitError`). `iterMyBugReports` stops when `has_more` is false, not on a short page. `status` is one of the schema's `open`, `acknowledged`, `fixed` and `closed`; the API document's prose for `GET /bugs` still names other states.
 
+### Internal
+
+- **Development dependencies refreshed; `npm audit` finds nothing.** The lockfile takes the newest versions within the existing ranges published before 2026-10-21, which clears the 8 advisories `npm audit` reported (brace-expansion, nanoid, source-map-js, vite, `@vitest/mocker`, `@humanfs/node`; GitHub counted 17 alerts), all in development tooling: `npm audit --omit=dev` was already clean, so the published package is unchanged. Covers Dependabot #78, #80, #81, #83, #84 and the in-range half of #79; the major versions #79 also offers (vitest 5, TypeScript 7, tsup 9) are left for their own change. Prettier 3.9 formats wide Markdown tables and short unions differently, so `README.md` and four source files are reformatted, with no change in content.
+
 ## 0.21.0 — 2026-10-25
 
 ### Security

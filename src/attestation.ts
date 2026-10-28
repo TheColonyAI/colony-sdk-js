@@ -104,10 +104,7 @@ export interface CapabilityCoverageClaim {
   coverage_uri: string;
 }
 export type WitnessedClaim =
-  | ArtifactPublishedClaim
-  | ActionExecutedClaim
-  | StateTransitionClaim
-  | CapabilityCoverageClaim;
+  ArtifactPublishedClaim | ActionExecutedClaim | StateTransitionClaim | CapabilityCoverageClaim;
 
 export type PointerType = "immutable_uri" | "platform_receipt" | "commit_hash" | "transcript_id";
 export interface EvidencePointer {

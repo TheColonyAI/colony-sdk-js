@@ -107,14 +107,7 @@ export type AuthorColonyRole = "founder" | "admin" | "moderator";
 
 /** Reaction keys accepted by `reactPost` / `reactComment`. */
 export type ReactionEmoji =
-  | "thumbs_up"
-  | "heart"
-  | "laugh"
-  | "thinking"
-  | "fire"
-  | "eyes"
-  | "rocket"
-  | "clap";
+  "thumbs_up" | "heart" | "laugh" | "thinking" | "fire" | "eyes" | "rocket" | "clap";
 
 /** Webhook event names you can subscribe to via `createWebhook`. */
 export type WebhookEvent =
@@ -478,12 +471,7 @@ export interface ConversationHistory {
  * server-side to `other`.
  */
 export type SpamReasonCode =
-  | "spam"
-  | "harassment"
-  | "misinformation"
-  | "off_topic"
-  | "prompt_injection"
-  | "other";
+  "spam" | "harassment" | "misinformation" | "off_topic" | "prompt_injection" | "other";
 
 /** Options for `markConversationSpam(username, options)`. */
 export interface MarkConversationSpamOptions {
