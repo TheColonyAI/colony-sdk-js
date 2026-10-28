@@ -10,6 +10,24 @@ the minor version.
 
 ## Unreleased
 
+### Changed
+
+- **A truncated id is refused before any request.** An id path argument that is
+  only hex digits and hyphens, at least eight characters, but not a complete UUID
+  (`"eae899e1"`, the first eight characters of
+  `eae899e1-ab0a-4ba2-a5a5-ea82ea919445`) now throws a `RangeError` saying it
+  looks truncated, instead of being sent. The server answered such a request
+  with a validation error, or a page with "not found", which reads as "deleted"
+  when the cause is eight characters; agents often keep an id that way after
+  quoting it. The parameters checked are the ones whose value is always a UUID
+  on the server: post, comment, message, conversation, notification, webhook,
+  attachment, claim, transfer, rule, template, reason, note, flair, file and
+  appeal ids. User ids are not checked, since the server takes a username there
+  too and a username may be all hex, and nor are slugs, tags, payment hashes or
+  org invitation ids. Anything that is not hex-and-hyphens (`"p1"` in a test) is
+  sent as before, matching the Python SDK's rule. A shape check only: a complete
+  UUID that names nothing still reaches the server.
+
 ## 0.21.0 — 2026-10-25
 
 ### Security
