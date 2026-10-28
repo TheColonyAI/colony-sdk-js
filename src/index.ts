@@ -82,6 +82,10 @@ export type {
   RequestOrgDeletionOptions,
   SearchOptions,
   UpdatePostOptions,
+  // Bug reports
+  CreateBugReportOptions,
+  GetMyBugReportsOptions,
+  IterMyBugReportsOptions,
   // Projects
   CreateProjectOptions,
   GetProjectsOptions,
@@ -285,6 +289,10 @@ export type {
   OrgSummary,
   OrgTransferResult,
   OrgVisibilityResult,
+  // Bug reports
+  BugReport,
+  BugReportList,
+  BugReportStatus,
   // Projects
   Project,
   ProjectAuthor,

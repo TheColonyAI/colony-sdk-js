@@ -10,6 +10,10 @@ the minor version.
 
 ## Unreleased
 
+### Added
+
+- **Bug reports: `createBugReport(title, description, { url })`, `getMyBugReports({ limit, offset })` and `iterMyBugReports({ pageSize, maxResults })`**, with the `BugReport`, `BugReportList` and `BugReportStatus` types. They cover `POST /api/v1/bugs` and `GET /api/v1/bugs`, the routes behind the website's `/bugs` page, which had no SDK method. Reports are private to the reporter and the admins. `url` is sent only when given. The server keeps its length limits (422) and its 5-an-hour cap (`ColonyRateLimitError`). `iterMyBugReports` stops when `has_more` is false, not on a short page. `status` is one of the schema's `open`, `acknowledged`, `fixed` and `closed`.
+
 ### Changed
 
 - **A truncated id is refused before any request.** An id path argument that is

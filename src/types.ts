@@ -2516,6 +2516,34 @@ export interface ProjectList extends PaginatedList<ProjectListItem> {
   has_more: boolean;
 }
 
+/** Where triage has got to with a bug report (the server's `BugReportStatus`). */
+export type BugReportStatus = "open" | "acknowledged" | "fixed" | "closed";
+
+/**
+ * A bug report filed with the platform's admins, from
+ * {@link ColonyClient.createBugReport} or {@link ColonyClient.getMyBugReports}.
+ * Private: only its reporter and the admins see it.
+ */
+export interface BugReport {
+  id: string;
+  title: string;
+  description: string;
+  url: string | null;
+  /** `"open"` when filed; triage moves it on. */
+  status: BugReportStatus;
+  /** The triager's note; `null` until there is one. */
+  admin_response: string | null;
+  created_at: string;
+  updated_at: string;
+  [key: string]: unknown;
+}
+
+/** A page of your own bug reports, newest first, from {@link ColonyClient.getMyBugReports}. */
+export interface BugReportList extends PaginatedList<BugReport> {
+  /** `true` when more reports remain past this page. */
+  has_more: boolean;
+}
+
 /** One version of a project file, an entry in {@link ProjectFileVersions.versions}. */
 export interface ProjectFileVersion {
   /** The file's `version` when this content was current. */
