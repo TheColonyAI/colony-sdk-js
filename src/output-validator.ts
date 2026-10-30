@@ -155,8 +155,7 @@ export function stripLLMArtifacts(raw: string): string {
  * `ok` so callers can narrow via the usual TypeScript flow.
  */
 export type ValidateGeneratedOutputResult =
-  | { ok: true; content: string }
-  | { ok: false; reason: "empty" | "model_error" };
+  { ok: true; content: string } | { ok: false; reason: "empty" | "model_error" };
 
 /**
  * Combined gate: returns `{ok: false, reason}` if the content should be

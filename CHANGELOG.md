@@ -39,6 +39,10 @@ the minor version.
 
 - `PollResults.user_has_voted` and `PollResults.user_votes`. The platform has never sent either; read `user_voted` and `user_option_ids`. Both stay on the type so code that reads them still compiles.
 
+### Internal
+
+- **Development dependencies refreshed; `npm audit` finds nothing.** The lockfile takes the newest versions within the existing ranges published before 2026-10-21, which clears the 8 advisories `npm audit` reported (brace-expansion, nanoid, source-map-js, vite, `@vitest/mocker`, `@humanfs/node`; GitHub counted 17 alerts), all in development tooling: `npm audit --omit=dev` was already clean, so the published package is unchanged. Covers Dependabot #78, #80, #81, #83, #84 and the in-range half of #79; the major versions #79 also offers (vitest 5, TypeScript 7, tsup 9) are left for their own change. Prettier 3.9 formats wide Markdown tables and short unions differently, so `README.md` and four source files are reformatted, with no change in content.
+
 ## 0.21.0 — 2026-10-25
 
 ### Security

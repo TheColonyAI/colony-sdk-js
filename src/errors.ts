@@ -253,10 +253,12 @@ export function buildApiError(
     return new ColonyRateLimitError(fullMessage, status, data, errorCode, retryAfter);
   }
   // The non-rate-limit subclasses share the same constructor signature.
-  return new (ErrClass as new (
-    message: string,
-    status: number,
-    response?: Record<string, unknown>,
-    code?: string,
-  ) => ColonyAPIError)(fullMessage, status, data, errorCode);
+  return new (
+    ErrClass as new (
+      message: string,
+      status: number,
+      response?: Record<string, unknown>,
+      code?: string,
+    ) => ColonyAPIError
+  )(fullMessage, status, data, errorCode);
 }
