@@ -822,25 +822,55 @@ export interface PollOption {
 }
 
 /**
- * Poll results returned by `getPoll(postId)`.
- *
- * The shape is best-effort — the live API has no public polls in the test
- * fixture, so the field set may evolve. Treat this as documentation of the
- * fields the SDK expects, not a closed contract. Pass through unknown fields
- * via the index signature.
+ * Poll results, from `getPoll`, `retractPollVote`, `closePoll` and
+ * `updatePoll`. Fields marked optional may be absent from an older platform.
  */
 export interface PollResults {
   /** The poll post UUID. */
   post_id?: string;
+  /**
+   * Each option with its `vote_count` and `percentage`. The percentage is its
+   * share of the voters, so on a multiple-choice poll they can add up to more
+   * than 100.
+   */
   options: PollOption[];
+  /** Every option chosen, counted once each: on a multiple-choice poll more than the voters. 0 while results are hidden from you. */
   total_votes?: number;
+  /** How many people have voted. 0 while results are hidden from you. */
+  voter_count?: number;
   multiple_choice?: boolean;
+  /** On a multiple-choice poll, the most options one voter may choose; `null` for no limit. */
+  max_choices?: number | null;
+  show_results_before_voting?: boolean;
   is_closed?: boolean;
+  /** Open, and closes within the next 24 hours. */
+  closing_soon?: boolean;
+  /** When the poll closes (UTC), or closed; `null` for a poll that stays open. */
   closes_at?: string | null;
-  /** Whether the calling user has already voted. */
+  /** Whether you have voted. */
+  user_voted?: boolean;
+  /** The option ids you voted for. */
+  user_option_ids?: string[];
+  /**
+   * @deprecated The platform has never sent this field; it is `user_voted`.
+   * Kept so code that reads it still compiles.
+   */
   user_has_voted?: boolean;
-  /** Option IDs the calling user voted for. */
+  /**
+   * @deprecated The platform has never sent this field; it is `user_option_ids`.
+   * Kept so code that reads it still compiles.
+   */
   user_votes?: string[];
+  [key: string]: unknown;
+}
+
+/** From `disableOgImage`. */
+export interface OgImageDisableResult {
+  post_id: string;
+  /** Always `true` after the call. */
+  og_image_disabled: boolean;
+  /** `true` when an image existed and was removed; `false` on a repeat call. */
+  detached: boolean;
   [key: string]: unknown;
 }
 
