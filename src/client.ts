@@ -854,10 +854,67 @@ interface PathSegmentOptions {
  * Anything else is percent-encoded and sent. For a UUID, a username or a slug
  * that is the identity, so no call that works today changes. A caller's
  * `%2e%2e` cannot become a dot segment either, because its `%` is escaped too.
+ *
+ * A parameter in {@link UUID_PATH_PARAMS} also refuses a truncated id: see
+ * {@link refuseTruncatedId}.
  */
+/**
+ * The path parameters whose value is always a UUID on the server (`format:
+ * uuid` in its API document). User ids are not among them: the server takes a
+ * username there too, and a username may be all hex. Nor are org invitation
+ * ids, which are not UUIDs.
+ */
+export const UUID_PATH_PARAMS: ReadonlySet<string> = new Set([
+  "appealId",
+  "attachmentId",
+  "claimId",
+  "commentId",
+  "convId",
+  "conversationId",
+  "fileId",
+  "flairId",
+  "messageId",
+  "msgId",
+  "noteId",
+  "notificationId",
+  "postId",
+  "reasonId",
+  "ruleId",
+  "templateId",
+  "transferId",
+  "webhookId",
+]);
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** Hex digits and hyphens, at least eight: the start of a UUID, cut short. */
+const UUID_FRAGMENT_RE = /^[0-9a-f-]{8,}$/i;
+
+/**
+ * Refuse an id that is the start of a UUID rather than the whole of one, before
+ * any request. Agents often keep or quote an id as its first eight characters
+ * (`eae899e1`), as people do in prose, and later pass that back; the server
+ * then answers that the id is invalid, or a page says not found, which reads
+ * as "deleted" when the cause is "eight characters". The rule matches the
+ * Python SDK's: only hex-and-hyphens that is not a complete UUID is refused, so
+ * a placeholder such as `"p1"` in a test is still sent as before. A shape
+ * check only: a complete UUID that names nothing still reaches the server.
+ */
+function refuseTruncatedId(value: string, name: string): void {
+  if (!UUID_RE.test(value) && UUID_FRAGMENT_RE.test(value)) {
+    throw new RangeError(
+      `${name} looks like a truncated id: ${JSON.stringify(value)} (${value.length} characters, ` +
+        "expected 36). Ids are full UUIDs: use the whole `id` from the response you read it from. " +
+        "Refused before any request.",
+    );
+  }
+}
+
 function pathSegment(value: unknown, name: string, options: PathSegmentOptions = {}): string {
   if (typeof value !== "string") {
     throw new TypeError(`${name} must be a string, got ${typeof value}.`);
+  }
+  if (UUID_PATH_PARAMS.has(name)) {
+    refuseTruncatedId(value, name);
   }
   if (options.allowSlash) {
     for (const part of value.split("/")) {

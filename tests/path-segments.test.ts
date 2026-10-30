@@ -31,7 +31,7 @@ import ts from "typescript";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-import { ColonyClient } from "../src/client.js";
+import { ColonyClient, UUID_PATH_PARAMS } from "../src/client.js";
 import { COLONIES } from "../src/colonies.js";
 import type { MessageAttachmentVariant } from "../src/types.js";
 import { retryConfig } from "../src/retry.js";
@@ -592,6 +592,80 @@ describe("legitimate values are still sent, encoded, as one segment", () => {
         expect(new URL(sent[0]!).pathname).toBe(path);
       });
     }
+  }
+});
+
+// ── Truncated ids ────────────────────────────────────────────────────────
+
+/**
+ * Every registry parameter, by whether the server's value is always a UUID
+ * (`format: uuid` in its API document). Each is in exactly one, so a new
+ * parameter needs a decision. User ids are not UUID-only: the server takes a
+ * username there too, and a username may be all hex.
+ */
+const NOT_UUID_PARAMS = new Set([
+  "colony",
+  "emoji",
+  "filename",
+  "grantId",
+  "invitationId",
+  "paymentHash",
+  "resourceId",
+  "slug",
+  "tag",
+  "user",
+  "userId",
+  "username",
+  "variant",
+  "versionNumber",
+]);
+
+describe("a truncated id is refused before any request (jack, 2026-10-28)", () => {
+  it("decides every registry parameter, UUID or not", () => {
+    const params = new Set(REGISTRY.map(([, p]) => p));
+    const undecided = [...params].filter(
+      (p) => !UUID_PATH_PARAMS.has(p) && !NOT_UUID_PARAMS.has(p),
+    );
+    const both = [...params].filter((p) => UUID_PATH_PARAMS.has(p) && NOT_UUID_PARAMS.has(p));
+    const stale = [...UUID_PATH_PARAMS].filter((p) => !params.has(p));
+    expect({ undecided, both, stale }).toEqual({ undecided: [], both: [], stale: [] });
+  });
+
+  for (const [method, param, invoke] of REGISTRY) {
+    if (!UUID_PATH_PARAMS.has(param)) continue;
+    for (const value of [
+      "eae899e1",
+      "EAE899E1",
+      "eae899e1-ab0a-4ba2",
+      "eae899e1ab0a4ba2a5a5ea82ea919445",
+    ]) {
+      it(`${method} refuses ${param} ${JSON.stringify(value)}`, async () => {
+        const mock = new MockFetch();
+        const err = await invoke(makeClient(mock.fetch), value).then(
+          () => undefined,
+          (e: unknown) => e,
+        );
+        expect(err).toBeInstanceOf(RangeError);
+        expect((err as Error).message.startsWith(`${param} `)).toBe(true);
+        if (kindOf(method, param) === "segment") {
+          expect((err as Error).message).toContain("looks like a truncated id");
+        }
+        expect(mock.calls).toHaveLength(0);
+      });
+    }
+  }
+
+  for (const [method, param, invoke] of REGISTRY) {
+    if (UUID_PATH_PARAMS.has(param) || kindOf(method, param) !== "segment") continue;
+    it(`${method} still sends ${param} "deadbeef12", which may be a real name`, async () => {
+      const answering = answeringFetch();
+      await invoke(makeClient(answering.fetch), "deadbeef12").catch(() => undefined);
+      const sent = answering.urls.filter(
+        (u) => !u.endsWith("/auth/token") && !u.includes("/colonies?limit="),
+      );
+      expect(sent).toHaveLength(1);
+      expect(rawPath(sent[0]!).split("/")).toContain("deadbeef12");
+    });
   }
 });
 
