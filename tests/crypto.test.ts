@@ -88,6 +88,17 @@ describe("CryptoRef", () => {
   });
 });
 
+describe("an over-long value", () => {
+  it("is refused unread: decoding is quadratic in the length", () => {
+    expect(() => CryptoRef.address("solana", "z".repeat(200_000))).toThrow(
+      "not a valid solana address",
+    );
+    expect(() => CryptoRef.tx("solana", "z".repeat(200_000))).toThrow(
+      "not a valid solana transaction id",
+    );
+  });
+});
+
 describe("cryptoDeclaration", () => {
   it("builds the block and refuses a contradiction", () => {
     const refs = [CryptoRef.asset("bsc", FLAPJAX)];

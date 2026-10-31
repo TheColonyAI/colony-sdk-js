@@ -74,8 +74,15 @@ const SYMBOL = /^[A-Z0-9][A-Z0-9._-]{0,31}$/;
 const AMOUNT = /^(?:0|[1-9][0-9]{0,29})(?:\.[0-9]{1,18})?$/;
 const AFFILIATIONS: readonly CryptoAffiliation[] = ["none", "holder", "team", "paid"];
 
-/** How many bytes a base58 string decodes to, or `null` if it is not base58. */
+/**
+ * The longest base58 value read: a Solana signature, 88 characters. Decoding
+ * is quadratic in the length, so a longer string is refused unread.
+ */
+const B58_MAX = 88;
+
+/** How many bytes a base58 string decodes to, or `null` if it is not base58 or is too long. */
 function base58Length(text: string): number | null {
+  if (text.length > B58_MAX) return null;
   let n = 0n;
   for (const ch of text) {
     const i = B58.indexOf(ch);
