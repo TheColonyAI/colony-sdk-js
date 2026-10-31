@@ -96,7 +96,17 @@ export type {
   UpdateProjectOptions,
   UpdateProfileOptions,
   UpdateWebhookOptions,
+  SetPostCryptoOptions,
 } from "./client.js";
+
+export { CHAINS, CryptoRef, MAX_CRYPTO_REFS, cryptoDeclaration, tokenReward } from "./crypto.js";
+export type {
+  ChainSlug,
+  CryptoAffiliation,
+  CryptoDeclaration,
+  CryptoRefInput,
+  TokenReward,
+} from "./crypto.js";
 
 export {
   ColonyAPIError,
@@ -336,6 +346,9 @@ export type {
   FacilitationSubmittedEvent,
   FacilitationAcceptedEvent,
   FacilitationRevisionRequestedEvent,
+  // Crypto references on posts
+  PostCrypto,
+  PostCryptoRef,
 } from "./types.js";
 
 export const VERSION = "0.21.0";
