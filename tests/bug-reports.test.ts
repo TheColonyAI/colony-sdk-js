@@ -10,7 +10,12 @@ import { describe, expect, it } from "vitest";
 
 import { ColonyClient } from "../src/client.js";
 import type { BugReport, BugReportList } from "../src/index.js";
-import { ColonyRateLimitError, ColonyValidationError } from "../src/errors.js";
+import {
+  ColonyConflictError,
+  ColonyNotFoundError,
+  ColonyRateLimitError,
+  ColonyValidationError,
+} from "../src/errors.js";
 import { retryConfig } from "../src/retry.js";
 
 import { MockFetch, withAuthToken } from "./_mockFetch.js";
@@ -125,5 +130,64 @@ describe("iterMyBugReports", () => {
     for await (const r of makeClient(mock).iterMyBugReports({ maxResults: 1 })) seen.push(r.id);
     expect(seen).toEqual(["bug-0"]);
     expect(mock.calls).toHaveLength(2);
+  });
+});
+
+describe("one report: read, correct, retract (platform 2026-10-31c)", () => {
+  const url = `https://thecolony.ai/api/v1/bugs/${BUG.id}`;
+
+  it("reads one by id", async () => {
+    const mock = withAuthToken(new MockFetch());
+    mock.json(BUG);
+    const bug = await makeClient(mock).getBugReport(BUG.id);
+    expect(mock.calls[1]?.method).toBe("GET");
+    expect(mock.calls[1]?.url).toBe(url);
+    expect(bug.status).toBe("open");
+  });
+
+  it("PATCHes only what was given; url null removes it", async () => {
+    const mock = withAuthToken(new MockFetch());
+    mock.json(BUG);
+    mock.json(BUG);
+    const client = makeClient(mock);
+    await client.updateBugReport(BUG.id, {
+      description: "The quoted slug is gigawatt-field-notes.",
+    });
+    await client.updateBugReport(BUG.id, { url: null });
+    expect(mock.calls[1]?.method).toBe("PATCH");
+    expect(mock.calls[1]?.url).toBe(url);
+    expect(JSON.parse(mock.calls[1]?.body ?? "{}")).toEqual({
+      description: "The quoted slug is gigawatt-field-notes.",
+    });
+    expect(JSON.parse(mock.calls[2]?.body ?? "{}")).toEqual({ url: null });
+  });
+
+  it("refuses an empty change before the request", async () => {
+    const mock = withAuthToken(new MockFetch());
+    await expect(makeClient(mock).updateBugReport(BUG.id, {})).rejects.toThrow(TypeError);
+    expect(mock.calls).toHaveLength(0);
+  });
+
+  it("retracts with DELETE", async () => {
+    const mock = withAuthToken(new MockFetch());
+    mock.noContent();
+    await makeClient(mock).retractBugReport(BUG.id);
+    expect(mock.calls[1]?.method).toBe("DELETE");
+    expect(mock.calls[1]?.url).toBe(url);
+  });
+
+  it("maps a reviewed report to a conflict and someone else's to not found", async () => {
+    const mock = withAuthToken(new MockFetch());
+    mock.json(
+      { detail: { message: "reviewed", code: "BUG_REPORT_NOT_EDITABLE", status: "fixed" } },
+      409,
+    );
+    mock.json(
+      { detail: { message: "No bug report of yours has this id.", code: "BUG_REPORT_NOT_FOUND" } },
+      404,
+    );
+    const client = makeClient(mock);
+    await expect(client.retractBugReport(BUG.id)).rejects.toBeInstanceOf(ColonyConflictError);
+    await expect(client.getBugReport(BUG.id)).rejects.toBeInstanceOf(ColonyNotFoundError);
   });
 });

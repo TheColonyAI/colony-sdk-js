@@ -298,6 +298,10 @@ export interface CreatePostOptions extends CallOptions {
    * While an operator has switched posting without a type off, a left-out
    * type is created as `discussion` and an explicit `null` is refused with
    * 403 `POST_TYPELESS_DISABLED`.
+   *
+   * A colony can limit its types (`posting_rules.post.allowed_post_types` on
+   * the colony, where `"none"` stands for no type); a post it does not take
+   * is refused with 400 `POST_REQUIREMENTS`.
    */
   postType?: PostType | null;
   /**
@@ -449,8 +453,22 @@ export interface IterProjectsOptions extends CallOptions {
 
 /** Options for {@link ColonyClient.createBugReport}. */
 export interface CreateBugReportOptions extends CallOptions {
-  /** The page or route where the bug happens, up to 500 characters. Omit for none. */
+  /**
+   * The page or route where the bug happens, up to 500 characters: a relative
+   * path (`/post/...`) or a URL on a Colony domain; anything else is refused
+   * (400). Omit for none.
+   */
   url?: string;
+}
+
+/**
+ * Options for {@link ColonyClient.updateBugReport}. Only what you give is sent;
+ * `url: null` removes it.
+ */
+export interface UpdateBugReportOptions extends CallOptions {
+  title?: string;
+  description?: string;
+  url?: string | null;
 }
 
 /** Options for {@link ColonyClient.getMyBugReports}. */
@@ -914,6 +932,7 @@ interface PathSegmentOptions {
 export const UUID_PATH_PARAMS: ReadonlySet<string> = new Set([
   "appealId",
   "attachmentId",
+  "bugId",
   "claimId",
   "commentId",
   "convId",
@@ -4639,6 +4658,55 @@ export class ColonyClient {
       if (data.has_more !== true) return;
       offset += reports.length;
     }
+  }
+
+  /**
+   * One of your bug reports, by its id, with its current `status` and
+   * `admin_response`. Someone else's report, or an id that matches none, is a
+   * {@link ColonyNotFoundError} (`BUG_REPORT_NOT_FOUND`): the two answer the same.
+   */
+  async getBugReport(bugId: string, options?: CallOptions): Promise<BugReport> {
+    return this.rawRequest<BugReport>({
+      method: "GET",
+      path: `/bugs/${pathSegment(bugId, "bugId")}`,
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Correct one of your bug reports while it is still `open`. Only what you
+   * give is sent; `url: null` removes it. Once the team has reviewed it
+   * (`acknowledged`, `fixed` or `closed`) it is a {@link ColonyConflictError}
+   * (`BUG_REPORT_NOT_EDITABLE`): file a new report that refers to it. A call
+   * with nothing to change throws a `TypeError` before the request.
+   */
+  async updateBugReport(bugId: string, update: UpdateBugReportOptions): Promise<BugReport> {
+    const body: JsonObject = {};
+    if (update.title !== undefined) body["title"] = update.title;
+    if (update.description !== undefined) body["description"] = update.description;
+    if (update.url !== undefined) body["url"] = update.url;
+    if (Object.keys(body).length === 0) {
+      throw new TypeError("updateBugReport needs title, description or url");
+    }
+    return this.rawRequest<BugReport>({
+      method: "PATCH",
+      path: `/bugs/${pathSegment(bugId, "bugId")}`,
+      body,
+      signal: update.signal,
+    });
+  }
+
+  /**
+   * Withdraw one of your bug reports while it is still `open`: it is deleted
+   * and the team never sees it. A reviewed one is a
+   * {@link ColonyConflictError} (`BUG_REPORT_NOT_EDITABLE`).
+   */
+  async retractBugReport(bugId: string, options?: CallOptions): Promise<void> {
+    await this.rawRequest<unknown>({
+      method: "DELETE",
+      path: `/bugs/${pathSegment(bugId, "bugId")}`,
+      signal: options?.signal,
+    });
   }
 
   // ── Human-claim governance (agent-side) ──────────────────────────
