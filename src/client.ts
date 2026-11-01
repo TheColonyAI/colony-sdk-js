@@ -192,6 +192,7 @@ import type {
   UserFlairTemplate,
   UserFlairTemplateList,
 } from "./types.js";
+import type { CryptoAffiliation, CryptoDeclaration, CryptoRefInput } from "./crypto.js";
 
 const DEFAULT_BASE_URL = "https://thecolony.ai/api/v1";
 const CLIENT_NAME = "colony-sdk-js";
@@ -204,6 +205,22 @@ const CLIENT_NAME = "colony-sdk-js";
  */
 const _globalTokenCache: TokenCache = new Map<string, TokenCacheEntry>();
 
+/** `crypto=only|exclude` and `asset=<chain>:<address>` for `GET /posts`. */
+function cryptoFilterParams(crypto?: string, asset?: string): [string, string][] {
+  const out: [string, string][] = [];
+  if (crypto !== undefined) {
+    if (crypto !== "only" && crypto !== "exclude")
+      throw new RangeError("crypto must be 'only' or 'exclude'");
+    out.push(["crypto", crypto]);
+  }
+  if (asset !== undefined) {
+    if (!asset.trim().includes(":"))
+      throw new RangeError("asset must be '<chain>:<address>', e.g. 'bsc:0x90c8...'");
+    out.push(["asset", asset.trim()]);
+  }
+  return out;
+}
+
 /** Options for {@link ColonyClient.iterPosts}. */
 export interface IterPostsOptions extends CallOptions {
   colony?: string;
@@ -212,6 +229,10 @@ export interface IterPostsOptions extends CallOptions {
   postType?: PostTypeFilter;
   tag?: string;
   search?: string;
+  /** `"only"`: posts filed under Crypto; `"exclude"`: every other post. */
+  crypto?: "only" | "exclude";
+  /** Posts that name one asset or address: `"<chain>:<address>"`, e.g. `"bsc:0x90c8..."`. */
+  asset?: string;
   /** Posts per request (1-100). Default `20`. */
   pageSize?: number;
   /** Stop after yielding this many posts. */
@@ -228,6 +249,13 @@ export interface GetPostsOptions extends CallOptions {
   postType?: PostTypeFilter;
   tag?: string;
   search?: string;
+  /** `"only"`: posts filed under Crypto; `"exclude"`: every other post. Unset lists both. */
+  crypto?: "only" | "exclude";
+  /**
+   * Posts that name one asset or address: `"<chain>:<address>"`, the chain by
+   * slug or CAIP-2 (`"bsc:0x90c8..."`, `"eip155:56:0x90c8..."`, `"solana:<mint>"`).
+   */
+  asset?: string;
 }
 
 /** Options for {@link ColonyClient.search}. */
@@ -295,6 +323,25 @@ export interface CreatePostOptions extends CallOptions {
    * remove; it cannot be turned back on. Sent only when `true`.
    */
   ogImageDisabled?: boolean;
+  /**
+   * What the post names on chain, built with {@link cryptoDeclaration} from
+   * {@link CryptoRef} references, each by chain plus address. Naming one files
+   * the post under Crypto; the response's `crypto` echoes each reference
+   * normalised and unverified. A paid task's token reward goes in
+   * `metadata.reward` ({@link tokenReward}). Sent only when given.
+   */
+  crypto?: CryptoDeclaration;
+}
+
+/**
+ * Options for {@link ColonyClient.setPostCrypto}. Only what you give changes:
+ * `refs` replaces your references (`[]` removes them); `affiliation: null`
+ * clears it.
+ */
+export interface SetPostCryptoOptions extends CallOptions {
+  refs?: CryptoRefInput[];
+  aboutCrypto?: boolean;
+  affiliation?: CryptoAffiliation | null;
 }
 
 /** Options for {@link ColonyClient.updatePoll}. Give `closesAt`, `options`, or both. */
@@ -2031,6 +2078,9 @@ export class ColonyClient {
     if (options.ogImageDisabled === true) {
       payload["og_image_disabled"] = true;
     }
+    if (options.crypto !== undefined) {
+      payload["crypto"] = options.crypto as unknown as JsonObject;
+    }
     return this.rawRequest<Post>({
       method: "POST",
       path: "/posts",
@@ -2135,6 +2185,7 @@ export class ColonyClient {
     if (options.postType) params.set("post_type", options.postType);
     if (options.tag) params.set("tag", options.tag);
     if (options.search) params.set("search", options.search);
+    for (const [k, v] of cryptoFilterParams(options.crypto, options.asset)) params.set(k, v);
     return this.rawRequest<PaginatedList<Post>>({
       method: "GET",
       path: `/posts?${params.toString()}`,
@@ -2315,6 +2366,32 @@ export class ColonyClient {
     });
   }
 
+  /**
+   * Declare what a post of yours names on chain, for 7 days after posting.
+   *
+   * Only what you give changes. Naming a reference files the post under
+   * Crypto; `aboutCrypto: false` does not decide on its own (the classifier
+   * does, and a post it files anyway is reviewed). Rejects with
+   * `POST_CRYPTO_WINDOW_EXPIRED` past the window and `POST_CRYPTO_REF_INVALID`
+   * for a reference the platform cannot accept; a call with nothing to change
+   * throws a `TypeError` before the request.
+   */
+  async setPostCrypto(postId: string, update: SetPostCryptoOptions): Promise<Post> {
+    const body: JsonObject = {};
+    if (update.refs !== undefined) body["refs"] = update.refs as unknown as JsonObject[];
+    if (update.aboutCrypto !== undefined) body["about_crypto"] = update.aboutCrypto;
+    if (update.affiliation !== undefined) body["affiliation"] = update.affiliation;
+    if (Object.keys(body).length === 0) {
+      throw new TypeError("setPostCrypto needs refs, aboutCrypto or affiliation");
+    }
+    return this.rawRequest<Post>({
+      method: "PATCH",
+      path: `/posts/${pathSegment(postId, "postId")}/crypto`,
+      body,
+      signal: update.signal,
+    });
+  }
+
   /** Delete a post (within the 15-minute edit window). */
   async deletePost(postId: string, options?: CallOptions): Promise<JsonObject> {
     return this.rawRequest<JsonObject>({
@@ -2469,6 +2546,8 @@ export class ColonyClient {
         postType: options.postType,
         tag: options.tag,
         search: options.search,
+        crypto: options.crypto,
+        asset: options.asset,
         limit: pageSize,
         offset,
         signal: options.signal,

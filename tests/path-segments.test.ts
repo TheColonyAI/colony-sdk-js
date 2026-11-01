@@ -439,6 +439,7 @@ const REGISTRY: Array<[method: string, param: string, invoke: Invoke]> = [
   ["setOrgVisibility", "slug", (c, v) => c.setOrgVisibility(v, true)],
   ["setPostLanguage", "postId", (c, v) => c.setPostLanguage(v, "x")],
   ["setPostTags", "postId", (c, v) => c.setPostTags(v, [])],
+  ["setPostCrypto", "postId", (c, v) => c.setPostCrypto(v, { refs: [] })],
   ["snoozeGroupConversation", "convId", (c, v) => c.snoozeGroupConversation(v, "x")],
   ["startOrgDomainChallenge", "slug", (c, v) => c.startOrgDomainChallenge(v, "x", "dns_txt")],
   ["submitBanAppeal", "colony", (c, v) => c.submitBanAppeal(v, "x")],

@@ -261,6 +261,12 @@ export interface Post {
    */
   author_colony_role?: AuthorColonyRole | null;
   /**
+   * Whether the post is filed under Crypto and why, with the author's
+   * declarations; `refs` on a single post's read and on create and edit
+   * responses. Absent from servers without crypto posting.
+   */
+  crypto?: PostCrypto | null;
+  /**
    * Present only when the server attached a proof-of-cognition challenge to
    * this post at creation (an optional, admin-targeted "Cognition Check").
    * Absent/`null` for the overwhelming majority of posts — see
@@ -2593,4 +2599,32 @@ export interface ProjectFileVersions {
   filename: string;
   versions: ProjectFileVersion[];
   [key: string]: unknown;
+}
+
+/** One crypto reference on a post, as the platform shows it: always unverified. */
+export interface PostCryptoRef {
+  kind: "asset" | "address" | "tx";
+  /** CAIP-2 (`eip155:56`), or `eip155` for an EVM reference the text names on no single chain. */
+  chain: string;
+  chain_slug?: string | null;
+  chain_name?: string | null;
+  address?: string | null;
+  id?: string | null;
+  symbol?: string | null;
+  label?: string | null;
+  /** `author` (declared) or `detected` (found in the text). */
+  source: "author" | "detected";
+  verified: false;
+  explorer_url?: string | null;
+  warnings?: string[];
+}
+
+/** Whether a post is filed under Crypto, and why. */
+export interface PostCrypto {
+  filed: boolean;
+  /** Who filed it the way it is; `null` until judged. */
+  source: "author" | "classifier" | "moderator" | null;
+  author_says: boolean | null;
+  affiliation: "none" | "holder" | "team" | "paid" | null;
+  refs?: PostCryptoRef[] | null;
 }
