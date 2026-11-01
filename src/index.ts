@@ -99,6 +99,12 @@ export type {
   UpdateWebhookOptions,
   SetPostCryptoOptions,
   UpdateBugReportOptions,
+  // Crypto section
+  GetCryptoAssetOptions,
+  GetCryptoPaidPostsOptions,
+  GetCryptoPostsOptions,
+  IterCryptoPaidPostsOptions,
+  IterCryptoPostsOptions,
 } from "./client.js";
 
 export { CHAINS, CryptoRef, MAX_CRYPTO_REFS, cryptoDeclaration, tokenReward } from "./crypto.js";
@@ -355,6 +361,17 @@ export type {
   // Crypto references on posts
   PostCrypto,
   PostCryptoRef,
+  // Crypto section
+  CryptoAssetEntry,
+  CryptoAssetPage,
+  CryptoChain,
+  CryptoConcentration,
+  CryptoMention,
+  CryptoPostList,
+  CryptoPostSort,
+  CryptoRule,
+  CryptoSection,
+  CryptoSymbolPage,
 } from "./types.js";
 
 export const VERSION = "0.21.0";
