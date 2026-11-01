@@ -66,6 +66,7 @@ export type {
   CreateOrgOptions,
   CreatePostOptions,
   UpdatePollOptions,
+  UpdateNotificationSettingsOptions,
   CrosspostOptions,
   DirectoryOptions,
   ExchangeTokenOptions,
@@ -319,6 +320,10 @@ export type {
   TokenExchangeResult,
   TrustLevel,
   UnreadCount,
+  // Notification settings
+  ColonyNotificationLevel,
+  NotificationSettings,
+  NotificationSwitch,
   User,
   UserType,
   VaultFile,
