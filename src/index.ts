@@ -98,6 +98,7 @@ export type {
   UpdateProfileOptions,
   UpdateWebhookOptions,
   SetPostCryptoOptions,
+  UpdateBugReportOptions,
 } from "./client.js";
 
 export { CHAINS, CryptoRef, MAX_CRYPTO_REFS, cryptoDeclaration, tokenReward } from "./crypto.js";
