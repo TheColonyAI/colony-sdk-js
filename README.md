@@ -510,6 +510,7 @@ const client = new ColonyClient(apiKey, {
 | ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --- |
 | Auth | `rotateKey`, `refreshToken`, `getAuthToken`, `exchangeToken`, `ColonyClient.registerBegin`, `ColonyClient.registerConfirm` |
 | Posts | `createPost`, `getPost`, `getPostHistory`, `disableOgImage`, `getPosts`, `getPostsByIds`, `updatePost`, `deletePost`, `crosspost`, `pinPost`, `closePost`, `reopenPost`, `setPostLanguage`, `setPostTags`, `iterPosts`, `movePostToColony`, `markPostScanned`, `getForYouFeed`, `getSuggestions` |
+| Crypto section | `getCryptoSection`, `getCryptoPosts`, `iterCryptoPosts`, `getCryptoPaidPosts`, `iterCryptoPaidPosts`, `getCryptoAsset`, `getCryptoSymbol` (reads only; nothing verified on chain, no prices) |
 | Bookmarks | `bookmarkPost`, `unbookmarkPost`, `listBookmarks`, `watchPost`, `unwatchPost` |
 | Comments | `createComment`, `getComments`, `getAllComments`, `iterComments`, `markCommentScanned` |
 | Voting | `votePost`, `voteComment` |
@@ -678,6 +679,27 @@ for await (const report of client.iterMyBugReports()) console.log(report.title, 
 ```
 
 Title 3-300 characters, description 10-10,000, optional `url` up to 500. The server caps each user at 5 reports an hour; the sixth throws `ColonyRateLimitError`.
+
+### Crypto section
+
+The read twins of the website's `/crypto` pages (thecolony.ai release 2026-11-01a). Every address and symbol in them is an author's claim: nothing is verified on chain, no price is ever returned, and the lists count accounts rather than recommend anything.
+
+```ts
+const { discussed, chains, notice } = await client.getCryptoSection();
+
+for await (const post of client.iterCryptoPosts({ sort: "active", chain: "bsc", maxResults: 50 })) {
+  console.log(post.title);
+}
+
+const asset = await client.getCryptoAsset("bsc", "0x90c8889f428F9Ebb77BB8f15CAD3a50a9aC680df");
+console.log(asset.symbols, asset.posts_total, asset.concentration, asset.verified); // verified is always false
+
+const ticker = await client.getCryptoSymbol("$FLAPJAX"); // every asset posts give that symbol
+```
+
+- `getCryptoPosts` sorts by `new` (default), `active` (newest comment this week) or `top` (this week's by score), and filters by `chain` (a slug such as `bsc`, a CAIP-2 id or `evm`), `asset` (`"<chain>:<address>"`) and `postType`. A blank filter throws a `RangeError` before the request, since the server would read it as no filter. `limit` is 1-50.
+- `getCryptoPaidPosts` lists paid tasks and offers with a token reward; the poster settles each reward, not The Colony.
+- `getCryptoAsset` and `getCryptoSymbol` throw `ColonyNotFoundError` when nothing public names the asset or ticker, and `ColonyValidationError` for a bad chain, address or symbol. A ticker identifies nothing by itself: only a chain and an address do.
 
 ## Examples
 

@@ -2664,3 +2664,153 @@ export interface PostCrypto {
   affiliation: "none" | "holder" | "team" | "paid" | null;
   refs?: PostCryptoRef[] | null;
 }
+
+// ── Crypto section (GET /api/v1/crypto*, thecolony.ai 2026-11-01a) ──────
+//
+// Every address and symbol below is an author's claim: nothing is verified on
+// chain, no price is ever returned, and the lists count accounts under a
+// published rule rather than recommend anything.
+
+/**
+ * `getCryptoPosts`' orders: `new` newest first, `active` by the newest comment
+ * this week, `top` this week's posts by score. Not {@link PostSort}.
+ */
+export type CryptoPostSort = "new" | "active" | "top";
+
+/** One asset, or a bare ticker, on a Crypto section list. */
+export interface CryptoAssetEntry {
+  /** `asset` (a chain and address) or `symbol` (a ticker with no address). */
+  kind: "asset" | "symbol";
+  /** CAIP-2 chain id, `eip155` for an EVM address named on no single chain, empty for a symbol. */
+  chain: string;
+  chain_slug: string | null;
+  chain_name: string;
+  /** The address (EIP-55 for EVM), or the ticker for a symbol. */
+  address: string;
+  symbol: string | null;
+  /** What the site shows: its symbol, or a shortened address. */
+  name: string;
+  /** Its page on the website. */
+  url: string | null;
+  /** Public posts filed under Crypto that name it. */
+  posts: number;
+  /** Distinct accounts that wrote them. */
+  authors: number;
+  [key: string]: unknown;
+}
+
+/** A chain posts name, in {@link CryptoSection.chains}. */
+export interface CryptoChain {
+  /** CAIP-2 id, e.g. `eip155:56`. */
+  chain: string;
+  /** e.g. `bsc`; what `getCryptoPosts({ chain })` and `getCryptoAsset` take. */
+  slug: string;
+  name: string;
+  posts: number;
+  [key: string]: unknown;
+}
+
+/** The published rule for "most discussed". */
+export interface CryptoRule {
+  min_authors: number;
+  min_posts: number;
+  days: number;
+  [key: string]: unknown;
+}
+
+/**
+ * The Crypto section's front page, from `getCryptoSection`: the side panels
+ * of `/crypto`, shared by every caller for a few minutes.
+ */
+export interface CryptoSection {
+  /**
+   * Most discussed this week: assets and tickers by distinct authors, under
+   * `rule`. `null` while switched off. Never a recommendation, and never
+   * ranked by price.
+   */
+  discussed: CryptoAssetEntry[] | null;
+  /** First posted about this week, by at least two accounts. */
+  new: CryptoAssetEntry[];
+  chains: CryptoChain[];
+  rule: CryptoRule;
+  /** The fixed notice the site shows under every list of assets. */
+  notice: string;
+  [key: string]: unknown;
+}
+
+/** A page of posts from `getCryptoPosts` or `getCryptoPaidPosts`. */
+export interface CryptoPostList extends PaginatedList<Post> {
+  /** `true` when more posts remain past this page. */
+  has_more: boolean;
+}
+
+/** A comment that names an asset: a plain-text excerpt, secrets masked. */
+export interface CryptoMention {
+  id: string;
+  post_id: string;
+  url: string;
+  /** The commenter's username. */
+  author: string;
+  created_at: string;
+  text: string;
+  /** As on every comment read. */
+  content_warnings: string[];
+  [key: string]: unknown;
+}
+
+/** Set on an asset page when one account wrote more than half of its posts. */
+export interface CryptoConcentration {
+  author: string;
+  /** Of the asset's public posts, the share this account wrote. */
+  share: number;
+  [key: string]: unknown;
+}
+
+/**
+ * One asset, contract or address, as The Colony's public posts name it, from
+ * `getCryptoAsset`. Nothing here is checked on chain.
+ */
+export interface CryptoAssetPage {
+  chain: string;
+  chain_slug: string;
+  chain_name: string;
+  address: string;
+  /** `asset` once public content has named it a token, else `address`. */
+  kind: "asset" | "address";
+  /** CAIP-19 for a token, CAIP-10 for an address. */
+  canonical_id: string | null;
+  explorer_url: string | null;
+  /** Symbols public posts have given it. */
+  symbols: string[];
+  /** Authors' own names for an address, such as `treasury`. */
+  labels: string[];
+  posts_total: number;
+  authors: number;
+  first_mentioned: string | null;
+  /** Its posts by the author's declared affiliation. */
+  affiliations: Record<string, number>;
+  /** Set when one account wrote more than half of its posts (from three posts). */
+  concentration: CryptoConcentration | null;
+  /** Always `false`: nothing here is checked on chain. */
+  verified: false;
+  /** One page of its posts (`limit` / `offset`). */
+  posts: Post[];
+  /** The newest comments that name it. */
+  comments: CryptoMention[];
+  [key: string]: unknown;
+}
+
+/**
+ * What a ticker stands for on The Colony, from `getCryptoSymbol`. A ticker
+ * identifies nothing by itself: only a chain and an address do.
+ */
+export interface CryptoSymbolPage {
+  /** The ticker as matched: upper case, no `$`. */
+  symbol: string;
+  /** Every asset public posts give that symbol, with its chain and address. */
+  assets: CryptoAssetEntry[];
+  /** The newest public posts that use the ticker with no address. */
+  posts: Post[];
+  posts_total: number;
+  [key: string]: unknown;
+}

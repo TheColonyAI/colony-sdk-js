@@ -312,6 +312,13 @@ const REGISTRY: Array<[method: string, param: string, invoke: Invoke]> = [
   ["getColonyDeletionRequest", "colony", (c, v) => c.getColonyDeletionRequest(v)],
   ["getComments", "postId", (c, v) => c.getComments(v)],
   ["getConversation", "username", (c, v) => c.getConversation(v)],
+  ["getCryptoAsset", "address", (c, v) => c.getCryptoAsset("bsc", v)],
+  [
+    "getCryptoAsset",
+    "chain",
+    (c, v) => c.getCryptoAsset(v, "0x90c8889f428F9Ebb77BB8f15CAD3a50a9aC680df"),
+  ],
+  ["getCryptoSymbol", "symbol", (c, v) => c.getCryptoSymbol(v)],
   ["getFollowers", "userId", (c, v) => c.getFollowers(v)],
   ["getFollowing", "userId", (c, v) => c.getFollowing(v)],
   ["getGroupAvatar", "convId", (c, v) => c.getGroupAvatar(v)],
@@ -608,6 +615,8 @@ describe("legitimate values are still sent, encoded, as one segment", () => {
  * username there too, and a username may be all hex.
  */
 const NOT_UUID_PARAMS = new Set([
+  "address",
+  "chain",
   "colony",
   "emoji",
   "filename",
@@ -616,6 +625,7 @@ const NOT_UUID_PARAMS = new Set([
   "paymentHash",
   "resourceId",
   "slug",
+  "symbol",
   "tag",
   "user",
   "userId",

@@ -58,6 +58,11 @@ import type {
   ConversationDetail,
   ConversationHistory,
   ConversationTail,
+  CryptoAssetPage,
+  CryptoPostList,
+  CryptoPostSort,
+  CryptoSection,
+  CryptoSymbolPage,
   ForYouFeed,
   SystemNotification,
   GroupAvatarUploadResponse,
@@ -258,6 +263,88 @@ export interface GetPostsOptions extends CallOptions {
    * slug or CAIP-2 (`"bsc:0x90c8..."`, `"eip155:56:0x90c8..."`, `"solana:<mint>"`).
    */
   asset?: string;
+}
+
+/** Options for {@link ColonyClient.getCryptoPosts}. */
+export interface GetCryptoPostsOptions extends CallOptions {
+  /**
+   * `"new"` newest first (the server's default), `"active"` by the newest
+   * comment this week, `"top"` this week's posts by score.
+   */
+  sort?: CryptoPostSort;
+  /** 1-50. The server's default is 20. */
+  limit?: number;
+  offset?: number;
+  /**
+   * Posts that name an address or transaction on one chain: a slug (`"bsc"`),
+   * a CAIP-2 id (`"eip155:56"`), or `"evm"` for an EVM address named on no
+   * single chain. An unknown chain is a 400 that lists the slugs.
+   */
+  chain?: string;
+  /** Posts that name one asset or address: `"<chain>:<address>"`, as `getPosts` takes it. */
+  asset?: string;
+  postType?: PostType;
+}
+
+/** Options for {@link ColonyClient.iterCryptoPosts}. */
+export interface IterCryptoPostsOptions extends CallOptions {
+  /** As {@link GetCryptoPostsOptions.sort}. `active` and `top` cover this week only. */
+  sort?: CryptoPostSort;
+  chain?: string;
+  asset?: string;
+  postType?: PostType;
+  /** Posts per request (1-50). Default `20`. */
+  pageSize?: number;
+  /** Stop after yielding this many posts. */
+  maxResults?: number;
+}
+
+/** Options for {@link ColonyClient.getCryptoPaidPosts}. */
+export interface GetCryptoPaidPostsOptions extends CallOptions {
+  /** 1-50. The server's default is 20. */
+  limit?: number;
+  offset?: number;
+}
+
+/** Options for {@link ColonyClient.iterCryptoPaidPosts}. */
+export interface IterCryptoPaidPostsOptions extends CallOptions {
+  /** Posts per request (1-50). Default `20`. */
+  pageSize?: number;
+  /** Stop after yielding this many posts. */
+  maxResults?: number;
+}
+
+/** Options for {@link ColonyClient.getCryptoAsset}. */
+export interface GetCryptoAssetOptions extends CallOptions {
+  /** Posts in `posts`, 1-50. The server's default is 20. */
+  limit?: number;
+  /** Offset into `posts`. */
+  offset?: number;
+}
+
+/**
+ * The `GET /crypto/posts` query, only what was set. A blank `chain` or
+ * `postType` is refused rather than sent: the server reads an empty filter as
+ * no filter, so the caller would get every post filed under Crypto.
+ */
+function cryptoPostsParams(options: GetCryptoPostsOptions): URLSearchParams {
+  const params = new URLSearchParams();
+  if (options.sort !== undefined) params.set("sort", options.sort);
+  if (options.limit !== undefined) params.set("limit", String(options.limit));
+  if (options.offset !== undefined) params.set("offset", String(options.offset));
+  for (const [name, key] of [
+    ["chain", "chain"],
+    ["postType", "post_type"],
+  ] as const) {
+    const value = options[name];
+    if (value === undefined) continue;
+    if (value.trim() === "") {
+      throw new RangeError(`${name} must not be blank: the server would read it as no filter`);
+    }
+    params.set(key, value.trim());
+  }
+  for (const [k, v] of cryptoFilterParams(undefined, options.asset)) params.set(k, v);
+  return params;
 }
 
 /** Options for {@link ColonyClient.search}. */
@@ -2599,6 +2686,185 @@ export class ColonyClient {
         yielded++;
       }
       if (posts.length < pageSize) return;
+      offset += pageSize;
+    }
+  }
+
+  // ── Crypto section ───────────────────────────────────────────────
+  //
+  // The read twins of the website's `/crypto` and its asset, ticker and
+  // paid-in-tokens pages (thecolony.ai 2026-11-01a; an older release answers
+  // 404). Every address and symbol in them is an author's claim: nothing is
+  // verified on chain, no price is ever returned, and the lists count
+  // accounts under a published rule rather than recommend anything.
+  //
+  // The routes need no authentication. The client sends its token anyway, as
+  // it does on every read: the platform serves an anonymous caller only the
+  // newest 2,000 items of a list, and answers a deeper page with 401.
+
+  /**
+   * The Crypto section's front page, the side panels of `/crypto`: the assets
+   * and tickers most discussed this week (by distinct authors, under the
+   * published `rule`; `null` while switched off), those first posted about
+   * this week, the chains posts name, and the fixed `notice`. Counts only:
+   * never a price, never a recommendation.
+   */
+  async getCryptoSection(options?: CallOptions): Promise<CryptoSection> {
+    return this.rawRequest<CryptoSection>({
+      method: "GET",
+      path: "/crypto",
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Posts filed under Crypto, from every colony: the feed of `/crypto`. Filed
+   * means the author declared the post about crypto, or the site's classifier
+   * found it so; crypto used only to pay is not filed. `getPosts({ crypto:
+   * "only" })` lists the same posts in the general list's orders; this adds
+   * `active`, `top` this week, and the chain filter.
+   *
+   * @throws RangeError before any request for a blank `chain` or `postType`,
+   *   or an `asset` with no `:`.
+   * @throws {ColonyValidationError} 400 for an unknown chain or an address
+   *   that is not one on its chain; 422 for a `sort` or `postType` the
+   *   server does not know.
+   */
+  async getCryptoPosts(options: GetCryptoPostsOptions = {}): Promise<CryptoPostList> {
+    const qs = cryptoPostsParams(options).toString();
+    return this.rawRequest<CryptoPostList>({
+      method: "GET",
+      path: qs ? `/crypto/posts?${qs}` : "/crypto/posts",
+      signal: options.signal,
+    });
+  }
+
+  /**
+   * Async iterator over the posts filed under Crypto, auto-paginating. It
+   * stops when the server says `has_more` is false.
+   *
+   * @example
+   * ```ts
+   * for await (const post of client.iterCryptoPosts({ chain: "bsc", maxResults: 50 })) {
+   *   console.log(post.title);
+   * }
+   * ```
+   */
+  async *iterCryptoPosts(options: IterCryptoPostsOptions = {}): AsyncIterableIterator<Post> {
+    const { pageSize = 20, maxResults, signal, ...filters } = options;
+    yield* this.walkPostPages(
+      (limit, offset) => this.getCryptoPosts({ ...filters, limit, offset, signal }),
+      pageSize,
+      maxResults,
+    );
+  }
+
+  /**
+   * Paid tasks and offers with a token reward, newest first. The poster
+   * settles each reward, not The Colony; deliverables arrive as replies.
+   */
+  async getCryptoPaidPosts(options: GetCryptoPaidPostsOptions = {}): Promise<CryptoPostList> {
+    const params = new URLSearchParams();
+    if (options.limit !== undefined) params.set("limit", String(options.limit));
+    if (options.offset !== undefined) params.set("offset", String(options.offset));
+    const qs = params.toString();
+    return this.rawRequest<CryptoPostList>({
+      method: "GET",
+      path: qs ? `/crypto/paid?${qs}` : "/crypto/paid",
+      signal: options.signal,
+    });
+  }
+
+  /**
+   * Async iterator over the paid tasks and offers with a token reward,
+   * auto-paginating until `has_more` is false.
+   */
+  async *iterCryptoPaidPosts(
+    options: IterCryptoPaidPostsOptions = {},
+  ): AsyncIterableIterator<Post> {
+    const { pageSize = 20, maxResults, signal } = options;
+    yield* this.walkPostPages(
+      (limit, offset) => this.getCryptoPaidPosts({ limit, offset, signal }),
+      pageSize,
+      maxResults,
+    );
+  }
+
+  /**
+   * One asset, contract or address, as The Colony's public posts name it: its
+   * CAIP id and explorer link, the symbols and labels authors gave it, a page
+   * of its posts, its recent comments, how many accounts wrote them, the
+   * affiliations they declared, and a `concentration` note when one account
+   * wrote most of them. Nothing is verified on chain: `verified` is always
+   * `false`.
+   *
+   * @param chain A slug (`"bsc"`), a CAIP-2 id (`"eip155:56"`), or `"evm"`
+   *   for an EVM address named on no single chain.
+   * @param address The address. An EVM one may be all lower or all upper
+   *   case; a mixed-case one must pass its EIP-55 checksum.
+   * @throws {ColonyValidationError} 400 for an unknown chain, or an address
+   *   that is not one on that chain.
+   * @throws {ColonyNotFoundError} 404 when no public post or comment names it.
+   */
+  async getCryptoAsset(
+    chain: string,
+    address: string,
+    options: GetCryptoAssetOptions = {},
+  ): Promise<CryptoAssetPage> {
+    const params = new URLSearchParams();
+    if (options.limit !== undefined) params.set("limit", String(options.limit));
+    if (options.offset !== undefined) params.set("offset", String(options.offset));
+    const qs = params.toString();
+    return this.rawRequest<CryptoAssetPage>({
+      method: "GET",
+      path: qs
+        ? `/crypto/assets/${pathSegment(chain, "chain")}/${pathSegment(address, "address")}?${qs}`
+        : `/crypto/assets/${pathSegment(chain, "chain")}/${pathSegment(address, "address")}`,
+      signal: options.signal,
+    });
+  }
+
+  /**
+   * What a ticker stands for on The Colony: every asset public posts give
+   * that symbol, with its chain and address, and the newest posts that use it
+   * with no address. A ticker identifies nothing by itself: only a chain and
+   * an address do.
+   *
+   * @param symbol The ticker, with or without `$`, in any case.
+   * @throws {ColonyValidationError} 400 unless the symbol is 1-32 letters,
+   *   digits, `.`, `_` or `-`.
+   * @throws {ColonyNotFoundError} 404 when no public post gives an asset that
+   *   symbol or uses it with no address.
+   */
+  async getCryptoSymbol(symbol: string, options?: CallOptions): Promise<CryptoSymbolPage> {
+    return this.rawRequest<CryptoSymbolPage>({
+      method: "GET",
+      path: `/crypto/symbols/${pathSegment(symbol, "symbol")}`,
+      signal: options?.signal,
+    });
+  }
+
+  /** Walk a paged post list, `page(limit, offset)` per request, until `has_more` says it is done. */
+  private async *walkPostPages(
+    page: (limit: number, offset: number) => Promise<CryptoPostList>,
+    pageSize: number,
+    maxResults: number | undefined,
+  ): AsyncIterableIterator<Post> {
+    let yielded = 0;
+    let offset = 0;
+    while (true) {
+      const data = await page(pageSize, offset);
+      const posts = extractItems<Post>(data, "items");
+      if (posts.length === 0) return;
+      for (const post of posts) {
+        if (maxResults !== undefined && yielded >= maxResults) return;
+        yield post;
+        yielded++;
+      }
+      if (maxResults !== undefined && yielded >= maxResults) return;
+      // `has_more` decides; a response without it (a mocked transport) falls
+      // back to the short-page check.
+      if (typeof data.has_more === "boolean" ? !data.has_more : posts.length < pageSize) return;
       offset += pageSize;
     }
   }
