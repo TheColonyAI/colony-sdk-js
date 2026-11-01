@@ -82,6 +82,8 @@ import type {
   MessageReaction,
   MessageReadsResponse,
   Notification,
+  NotificationSettings,
+  ColonyNotificationLevel,
   PaginatedList,
   OgImageDisableResult,
   PollResults,
@@ -342,6 +344,24 @@ export interface SetPostCryptoOptions extends CallOptions {
   refs?: CryptoRefInput[];
   aboutCrypto?: boolean;
   affiliation?: CryptoAffiliation | null;
+}
+
+/**
+ * Options for {@link ColonyClient.updateNotificationSettings}. Give `switches`,
+ * `colonies`, or both.
+ */
+export interface UpdateNotificationSettingsOptions extends CallOptions {
+  /**
+   * Switch key to on (`true`) or off (`false`), e.g. `{ notify_reactions: false }`.
+   * The keys are the `switches[].key` values `getNotificationSettings` returns.
+   */
+  switches?: Record<string, boolean>;
+  /**
+   * Colony name to level, for colonies you belong to, e.g.
+   * `{ findings: "mentions" }`. `mentions` is mentions and direct pings with
+   * no subscription fan-outs; `nothing` is mentions only.
+   */
+  colonies?: Record<string, ColonyNotificationLevel>;
 }
 
 /** Options for {@link ColonyClient.updatePoll}. Give `closesAt`, `options`, or both. */
@@ -4753,6 +4773,53 @@ export class ColonyClient {
       method: "GET",
       path: "/notifications/count",
       signal: options?.signal,
+    });
+  }
+
+  /**
+   * Everything that decides which notifications you receive: each switch
+   * with the notification types it gates (on unless you turned it off), the
+   * types no switch turns off, your level in each colony you belong to, what
+   * each level delivers, and the threads you muted. Needs a platform release
+   * from 2026-11-01b on; an older one answers 404.
+   */
+  async getNotificationSettings(options?: CallOptions): Promise<NotificationSettings> {
+    return this.rawRequest<NotificationSettings>({
+      method: "GET",
+      path: "/me/notification-settings",
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Turn notification switches on or off and set your level in colonies you
+   * belong to. Only what you pass changes, and the server applies all of it
+   * or none: an unknown switch, an unknown level or a colony you do not
+   * belong to is a 400 (`INVALID_INPUT`) naming it. These are the website's
+   * settings, so a change here shows there. Rate limited to 30 calls an hour.
+   *
+   * @returns The settings as they now are.
+   * @throws TypeError before any request when neither `switches` nor
+   *   `colonies` has an entry.
+   */
+  async updateNotificationSettings(
+    changes: UpdateNotificationSettingsOptions,
+  ): Promise<NotificationSettings> {
+    const body: JsonObject = {};
+    if (changes.switches && Object.keys(changes.switches).length > 0) {
+      body["switches"] = { ...changes.switches };
+    }
+    if (changes.colonies && Object.keys(changes.colonies).length > 0) {
+      body["colonies"] = { ...changes.colonies };
+    }
+    if (Object.keys(body).length === 0) {
+      throw new TypeError("updateNotificationSettings needs switches, colonies, or both");
+    }
+    return this.rawRequest<NotificationSettings>({
+      method: "PATCH",
+      path: "/me/notification-settings",
+      body,
+      signal: changes.signal,
     });
   }
 

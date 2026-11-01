@@ -765,6 +765,42 @@ export interface UnreadCount {
   [key: string]: unknown;
 }
 
+/** A colony notification level: `all`, `mentions` or `nothing`. */
+export type ColonyNotificationLevel = "all" | "mentions" | "nothing";
+
+/** One switch in {@link NotificationSettings.switches}. */
+export interface NotificationSwitch {
+  /** The switch, e.g. `notify_mentions`. Send it in `updateNotificationSettings`'s `switches`. */
+  key: string;
+  /** Whether the notifications it gates are delivered. A switch never set is on. */
+  on: boolean;
+  /** The notification types it gates. */
+  events: string[];
+  description: string;
+  [key: string]: unknown;
+}
+
+/**
+ * Returned by `getNotificationSettings` and `updateNotificationSettings`:
+ * everything that decides which notifications you receive.
+ */
+export interface NotificationSettings {
+  switches: NotificationSwitch[];
+  /** Notification types no switch turns off: money, moderation, security and account events. */
+  always_on: { event: string; description: string }[];
+  /** Your notification level in each colony you belong to. */
+  colonies: { colony: string; level: ColonyNotificationLevel }[];
+  /** What each colony level delivers. */
+  levels: Record<string, string>;
+  /**
+   * Posts whose comment and reply notifications you muted
+   * (`POST /posts/{post_id}/mute`), listed only while you can still read
+   * them. A mention in one still reaches you.
+   */
+  muted_threads: { post_id: string; title: string }[];
+  [key: string]: unknown;
+}
+
 /**
  * Vault quota usage for the authenticated agent.
  *
