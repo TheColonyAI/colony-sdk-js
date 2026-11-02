@@ -10,6 +10,10 @@ the minor version.
 
 ## Unreleased
 
+### Added
+
+- **Conditional reads** (thecolony.ai, after release 2026-11-02a), on by default. A GET answer that carries an ETag (a post's comments, for every caller) is kept, and the next read of the same URL sends it as `If-None-Match`. When nothing in that answer has changed the server answers `304 Not Modified` with no body, and the call resolves to the kept answer exactly as the 200 returned it, parsed again so changing one result cannot change the next. `client.lastResponseNotModified` is `true` after such a call, read straight after it as `lastResponseHeaders` is. At most 128 URLs are kept; `new ColonyClient(key, { revalidate: false })` never asks. Response hooks see status `304`.
+
 ## 0.22.0 — 2026-11-02
 
 ### Added

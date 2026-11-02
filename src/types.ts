@@ -1545,6 +1545,15 @@ export interface ColonyClientOptions {
    * ```
    */
   totp?: TotpProvider;
+  /**
+   * Conditional reads, on by default. A GET answer that carries an ETag (a
+   * post's comments, for every caller) is kept, and the next read of the same
+   * URL sends it as `If-None-Match`; when nothing in that answer has changed
+   * the server answers `304 Not Modified` with no body and the call returns
+   * the kept answer, parsed again. At most 128 URLs are kept. `false` never
+   * asks. See {@link ColonyClient.lastResponseNotModified}.
+   */
+  revalidate?: boolean;
 }
 
 // ── Tag follows ─────────────────────────────────────────────────────
