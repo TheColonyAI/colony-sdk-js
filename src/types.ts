@@ -2593,6 +2593,11 @@ export interface BugReport {
   status: BugReportStatus;
   /** The triager's note; `null` until there is one. */
   admin_response: string | null;
+  /**
+   * The id of your earlier report this one follows, named when it was filed;
+   * `null` if none, or if that report was retracted.
+   */
+  supersedes_id: string | null;
   created_at: string;
   updated_at: string;
   [key: string]: unknown;

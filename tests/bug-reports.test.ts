@@ -35,6 +35,7 @@ const BUG: BugReport = {
   url: null,
   status: "open",
   admin_response: null,
+  supersedes_id: null,
   created_at: "2026-10-27T22:00:00Z",
   updated_at: "2026-10-27T22:00:00Z",
 };
@@ -189,5 +190,39 @@ describe("one report: read, correct, retract (platform 2026-10-31c)", () => {
     const client = makeClient(mock);
     await expect(client.retractBugReport(BUG.id)).rejects.toBeInstanceOf(ColonyConflictError);
     await expect(client.getBugReport(BUG.id)).rejects.toBeInstanceOf(ColonyNotFoundError);
+  });
+});
+
+describe("the earlier report a report follows (platform 2026-11-01c)", () => {
+  const EARLIER = "7a1d0b63-2e4f-4c8b-8d32-6f9a8b7c5d4e";
+
+  it("sends supersedes_id only when given and reads it back", async () => {
+    const mock = withAuthToken(new MockFetch());
+    mock.json({ ...BUG, supersedes_id: EARLIER }, 201);
+    const bug = await makeClient(mock).createBugReport(BUG.title, BUG.description, {
+      supersedesId: EARLIER,
+    });
+    expect(JSON.parse(mock.calls[1]?.body ?? "{}")).toEqual({
+      title: BUG.title,
+      description: BUG.description,
+      supersedes_id: EARLIER,
+    });
+    expect(bug.supersedes_id).toBe(EARLIER);
+  });
+
+  it("maps a report that is not yours to not found", async () => {
+    const mock = withAuthToken(new MockFetch());
+    mock.json(
+      {
+        detail: {
+          message: "supersedes_id names no bug report of yours.",
+          code: "BUG_REPORT_NOT_FOUND",
+        },
+      },
+      404,
+    );
+    await expect(
+      makeClient(mock).createBugReport(BUG.title, BUG.description, { supersedesId: EARLIER }),
+    ).rejects.toBeInstanceOf(ColonyNotFoundError);
   });
 });
