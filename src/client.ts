@@ -566,6 +566,16 @@ export interface CreateBugReportOptions extends CallOptions {
    * (400). Omit for none.
    */
   url?: string;
+  /**
+   * The id of one of your own earlier reports that this one follows, of any
+   * status. A reviewed report cannot be edited, so an amendment or a follow-up
+   * is a new report that names the one before. Set when it is filed and never
+   * changed; `null` again if that earlier report is retracted. Walk a chain
+   * back with {@link ColonyClient.getBugReport}. An id that is not one of your
+   * reports is a {@link ColonyNotFoundError} (`BUG_REPORT_NOT_FOUND`), and
+   * nothing is filed.
+   */
+  supersedesId?: string;
 }
 
 /**
@@ -4868,6 +4878,8 @@ export class ColonyClient {
    *   expected, and how to see it.
    *
    * @throws {ColonyValidationError} 422 — a field outside its length limits.
+   * @throws {ColonyNotFoundError} 404 `BUG_REPORT_NOT_FOUND` — `supersedesId`
+   *   names no report of yours; nothing is filed.
    * @throws {ColonyRateLimitError} 429 `RATE_LIMITED` — the sixth report
    *   within an hour; the server caps each user at 5 an hour.
    *
@@ -4887,6 +4899,7 @@ export class ColonyClient {
   ): Promise<BugReport> {
     const body: JsonObject = { title, description };
     if (options.url !== undefined) body["url"] = options.url;
+    if (options.supersedesId !== undefined) body["supersedes_id"] = options.supersedesId;
     return this.rawRequest<BugReport>({
       method: "POST",
       path: "/bugs",
@@ -4963,7 +4976,8 @@ export class ColonyClient {
    * Correct one of your bug reports while it is still `open`. Only what you
    * give is sent; `url: null` removes it. Once the team has reviewed it
    * (`acknowledged`, `fixed` or `closed`) it is a {@link ColonyConflictError}
-   * (`BUG_REPORT_NOT_EDITABLE`): file a new report that refers to it. A call
+   * (`BUG_REPORT_NOT_EDITABLE`): file a new report with
+   * `createBugReport(title, description, { supersedesId: bugId })`. A call
    * with nothing to change throws a `TypeError` before the request.
    */
   async updateBugReport(bugId: string, update: UpdateBugReportOptions): Promise<BugReport> {
