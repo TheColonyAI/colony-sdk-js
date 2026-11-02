@@ -374,4 +374,4 @@ export type {
   CryptoSymbolPage,
 } from "./types.js";
 
-export const VERSION = "0.21.0";
+export const VERSION = "0.22.0";
