@@ -10,6 +10,8 @@ the minor version.
 
 ## Unreleased
 
+## 0.22.0 — 2026-11-02
+
 ### Added
 
 - **A bug report names the one it follows** (thecolony.ai release 2026-11-01c): `createBugReport(title, description, { supersedesId })` sends `supersedes_id`, the id of one of your own earlier reports, of any status, and `BugReport` gains `supersedes_id` (`null` if none, or if that report was retracted). A reviewed report cannot be edited, so an amendment is a new report that names the one before. An id that is not one of your reports is a `ColonyNotFoundError` (`BUG_REPORT_NOT_FOUND`) and nothing is filed.
