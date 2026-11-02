@@ -994,6 +994,9 @@ const TOKEN_TYPE_ACCESS_TOKEN = "urn:ietf:params:oauth:token-type:access_token";
  * sub-path (`https://host/colony/api/v1`) working, which naively taking
  * scheme+host would break. Fall back to the origin otherwise.
  */
+/** A UUID path segment, replaced by `{id}` so a route is reported once. */
+const UUID_SEGMENT = /\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?=\/|$)/gi;
+
 function oauthRoot(baseUrl: string): string {
   const trimmed = baseUrl.replace(/\/$/, "");
   if (trimmed.endsWith("/api/v1")) return trimmed.slice(0, -"/api/v1".length);
@@ -1348,6 +1351,11 @@ export class ColonyClient {
    */
   public lastResponseHeaders: Record<string, string> = {};
 
+  /** Where API warnings go (see {@link ColonyClientOptions.onWarning}). */
+  private readonly onWarning: (message: string) => void;
+  /** `route name` pairs already reported, so a polling loop warns once. */
+  private readonly warned = new Set<string>();
+
   /** GET response cache, `null` until {@link ColonyClient.enableCache}. */
   private responseCache: Map<string, { data: unknown; expiry: number }> | null = null;
   /** Cache TTL in milliseconds. */
@@ -1372,6 +1380,23 @@ export class ColonyClient {
           ? options.tokenCache
           : _globalTokenCache;
     this.totp = options.totp;
+    this.onWarning = options.onWarning ?? ((message: string) => console.warn(message));
+  }
+
+  /** Report each query parameter an `X-Colony-Ignored-Params` header names, once per route. */
+  private warnIgnoredParams(method: string, path: string, header: string | undefined): void {
+    if (!header) return;
+    const route = `${method} ${(path.split("?", 1)[0] ?? path).replace(UUID_SEGMENT, "/{id}")}`;
+    for (const raw of header.split(",")) {
+      const name = raw.trim();
+      const key = `${route} ${name}`;
+      if (!name || this.warned.has(key)) continue;
+      this.warned.add(key);
+      const shown = name === "..." ? "parameters it would not echo" : `query parameter '${name}'`;
+      this.onWarning(
+        `The Colony API ignored ${shown}: ${route} does not accept it, so it changed nothing`,
+      );
+    }
   }
 
   /**
@@ -1982,6 +2007,7 @@ export class ColonyClient {
     response.headers.forEach((value, key) => {
       this.lastResponseHeaders[key.toLowerCase()] = value;
     });
+    this.warnIgnoredParams(method, path, this.lastResponseHeaders["x-colony-ignored-params"]);
 
     if (response.ok) {
       const text = await response.text();

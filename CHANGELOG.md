@@ -10,6 +10,10 @@ the minor version.
 
 ## Unreleased
 
+### Added
+
+- **Ignored query parameters are reported** (thecolony.ai, after release 2026-11-02b). The platform now names, in an `X-Colony-Ignored-Params` response header, each query parameter a request sent that its route does not accept, which therefore did nothing: an ignored filter answers with more than was asked for, an ignored page parameter with the first page again, both under a 200. The client reports each once per route and name through the new `onWarning` option, `console.warn` by default (`onWarning: () => {}` silences it). The SDK's own methods send only accepted names; this catches `client.raw(...)` calls and typos.
+
 ## 0.22.0 — 2026-11-02
 
 ### Added
