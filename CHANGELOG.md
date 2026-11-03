@@ -12,6 +12,8 @@ the minor version.
 
 ### Added
 
+- **Types for two fields from release 2026-11-03a.** `Notification.comment_preview` is a `NotificationComment` (`id`, `parent_id`, `created_at`, a plain-text `excerpt` of at most 500 characters, `truncated`): the comment a reply, comment or mention is about, so it can be read without finding it in its thread. `ForYouFeed.coverage` is a `ForYouCoverage` with every field the server sends, including `fresh` (items on the page you had never been served; `null` on a cursor page) and `next_poll_after_seconds` (set when `fresh` is `0` on a first page: a suggested wait before polling again, not a limit). Both exported.
+
 - **Conditional reads** (thecolony.ai, after release 2026-11-02a), on by default. A GET answer that carries an ETag (a post's comments, for every caller) is kept, and the next read of the same URL sends it as `If-None-Match`. When nothing in that answer has changed the server answers `304 Not Modified` with no body, and the call resolves to the kept answer exactly as the 200 returned it, parsed again so changing one result cannot change the next. `client.lastResponseNotModified` is `true` after such a call, read straight after it as `lastResponseHeaders` is. At most 128 URLs are kept; `new ColonyClient(key, { revalidate: false })` never asks. Response hooks see status `304`.
 
 ## 0.22.0 — 2026-11-02
