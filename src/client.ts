@@ -985,6 +985,19 @@ const TOKEN_EXCHANGE_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:token-exchan
 /** RFC 8693 §3 token type identifier for an access token. */
 const TOKEN_TYPE_ACCESS_TOKEN = "urn:ietf:params:oauth:token-type:access_token";
 
+/** A UUID path segment, replaced by `{id}` so a route is reported once. */
+const UUID_SEGMENT = /\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?=\/|$)/gi;
+
+/** A JSON body, or `{}` for an empty or unparseable one. */
+function parseBody(text: string): unknown {
+  if (!text) return {};
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return {};
+  }
+}
+
 /**
  * Prefix for the OIDC endpoints.
  *
@@ -994,9 +1007,6 @@ const TOKEN_TYPE_ACCESS_TOKEN = "urn:ietf:params:oauth:token-type:access_token";
  * sub-path (`https://host/colony/api/v1`) working, which naively taking
  * scheme+host would break. Fall back to the origin otherwise.
  */
-/** A UUID path segment, replaced by `{id}` so a route is reported once. */
-const UUID_SEGMENT = /\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?=\/|$)/gi;
-
 function oauthRoot(baseUrl: string): string {
   const trimmed = baseUrl.replace(/\/$/, "");
   if (trimmed.endsWith("/api/v1")) return trimmed.slice(0, -"/api/v1".length);
@@ -1356,6 +1366,18 @@ export class ColonyClient {
   /** `route name` pairs already reported, so a polling loop warns once. */
   private readonly warned = new Set<string>();
 
+  /**
+   * True when the most recent request was answered `304 Not Modified` and
+   * returned the answer this client kept from its last read of that URL:
+   * nothing in it has changed since. Read it as {@link lastResponseHeaders}
+   * is, straight after the call. See {@link ColonyClientOptions.revalidate}.
+   */
+  public lastResponseNotModified = false;
+
+  /** ETag and raw body of recent GET answers, by URL, least recently used first. */
+  private readonly kept = new Map<string, { etag: string; text: string }>();
+  private readonly keptMax: number;
+
   /** GET response cache, `null` until {@link ColonyClient.enableCache}. */
   private responseCache: Map<string, { data: unknown; expiry: number }> | null = null;
   /** Cache TTL in milliseconds. */
@@ -1381,6 +1403,19 @@ export class ColonyClient {
           : _globalTokenCache;
     this.totp = options.totp;
     this.onWarning = options.onWarning ?? ((message: string) => console.warn(message));
+    this.keptMax = options.revalidate === false ? 0 : 128;
+  }
+
+  /** Keep a 200's body under its ETag, or forget the URL when it carried none. */
+  private keep(url: string, etag: string | null, text: string): void {
+    this.kept.delete(url);
+    if (!etag || this.keptMax <= 0) return;
+    this.kept.set(url, { etag, text });
+    while (this.kept.size > this.keptMax) {
+      const oldest = this.kept.keys().next().value;
+      if (oldest === undefined) break;
+      this.kept.delete(oldest);
+    }
   }
 
   /** Report each query parameter an `X-Colony-Ignored-Params` header names, once per route. */
@@ -1976,6 +2011,10 @@ export class ColonyClient {
     if (opts.extraHeaders) {
       Object.assign(headers, opts.extraHeaders);
     }
+    // A conditional read: ask whether the kept answer is still current.
+    const keptAnswer = method === "GET" ? this.kept.get(url) : undefined;
+    if (keptAnswer) headers["If-None-Match"] = keptAnswer.etag;
+    this.lastResponseNotModified = false;
 
     const timeoutSignal = AbortSignal.timeout(this.timeoutMs);
     const signal = opts.signal ? AbortSignal.any([timeoutSignal, opts.signal]) : timeoutSignal;
@@ -2009,16 +2048,22 @@ export class ColonyClient {
     });
     this.warnIgnoredParams(method, path, this.lastResponseHeaders["x-colony-ignored-params"]);
 
+    // Not modified since the kept answer, which is returned as the 200
+    // returned it, parsed again so a caller changing one result cannot
+    // change the next.
+    if (response.status === 304 && keptAnswer) {
+      this.kept.delete(url);
+      this.kept.set(url, keptAnswer);
+      this.lastResponseNotModified = true;
+      const unchanged = parseBody(keptAnswer.text);
+      for (const hook of this.responseHooks) hook(method, url, 304, unchanged);
+      return unchanged as T;
+    }
+
     if (response.ok) {
       const text = await response.text();
-      let parsed: unknown = {};
-      if (text) {
-        try {
-          parsed = JSON.parse(text);
-        } catch {
-          parsed = {};
-        }
-      }
+      const parsed = parseBody(text);
+      if (method === "GET") this.keep(url, response.headers.get("etag"), text);
       for (const hook of this.responseHooks) hook(method, url, response.status, parsed);
       return parsed as T;
     }
