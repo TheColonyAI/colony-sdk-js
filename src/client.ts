@@ -997,10 +997,43 @@ const TOKEN_TYPE_ACCESS_TOKEN = "urn:ietf:params:oauth:token-type:access_token";
 /** A JSON body, or `{}` for an empty or unparseable one. */
 function parseBody(text: string): unknown {
   if (!text) return {};
+  let parsed: unknown;
   try {
-    return JSON.parse(text) as unknown;
+    parsed = JSON.parse(text) as unknown;
   } catch {
     return {};
+  }
+  fillPostMetadata(parsed);
+  return parsed;
+}
+
+/**
+ * Give each post in an answer its `metadata`, from `metadata_` where only the
+ * older name came: a server before release 2026-11-04a sends only that, and an
+ * answer kept from one has only that. A post is wherever it sits in the answer
+ * (a list's items, a feed item, search results); an object is taken for one
+ * when it has an `id` and a `metadata_` and no `metadata`. A post's own
+ * metadata is the author's data and is not searched.
+ */
+function fillPostMetadata(value: unknown): void {
+  if (Array.isArray(value)) {
+    for (const v of value) fillPostMetadata(v);
+    return;
+  }
+  if (value === null || typeof value !== "object") return;
+  const obj = value as Record<string, unknown>;
+  const current = obj["metadata"];
+  if (
+    "id" in obj &&
+    obj["metadata_"] !== undefined &&
+    (current === undefined || current === null)
+  ) {
+    obj["metadata"] = obj["metadata_"];
+  }
+  for (const [key, v] of Object.entries(obj)) {
+    if (key !== "metadata" && key !== "metadata_" && v !== null && typeof v === "object") {
+      fillPostMetadata(v);
+    }
   }
 }
 
@@ -3543,7 +3576,12 @@ export class ColonyClient {
     if (data && typeof data === "object" && "idempotency_replayed" in data) {
       return data;
     }
-    const replayed = this.lastResponseHeaders["x-idempotency-replayed"]?.toLowerCase() === "true";
+    // `Idempotent-Replay` is the server's header; `X-Idempotency-Replayed` is
+    // the legacy alias it still sends beside it, read for an older server.
+    const flag =
+      this.lastResponseHeaders["idempotent-replay"] ??
+      this.lastResponseHeaders["x-idempotency-replayed"];
+    const replayed = flag?.toLowerCase() === "true";
     return { ...(data as object), idempotency_replayed: replayed } as MarkConversationSpamResponse;
   }
 
@@ -5971,14 +6009,14 @@ export class ColonyClient {
     options: ModQueueActionOptions = {},
   ): Promise<ModQueueActionResult> {
     const body: JsonObject = {
-      source_kind: sourceKind,
+      source: sourceKind,
       source_id: sourceId,
       action,
     };
     if (options.reasonId !== undefined) body["reason_id"] = options.reasonId;
     if (options.reasonText !== undefined) body["reason_text"] = options.reasonText;
     if (options.banDurationDays !== undefined) {
-      body["ban_duration_days"] = options.banDurationDays;
+      body["duration_days"] = options.banDurationDays;
     }
     return this.rawRequest<ModQueueActionResult>({
       method: "POST",
@@ -5999,7 +6037,16 @@ export class ColonyClient {
     items: ModQueueBulkItem[],
     options: ModQueueBulkActionOptions = {},
   ): Promise<ModQueueBulkResult> {
-    const body: JsonObject = { items: items as unknown as JsonObject[] };
+    // `source` is the server's name; `source_kind` is still accepted, but
+    // sending both with different values is refused, so send one.
+    const body: JsonObject = {
+      items: items.map(({ source, source_kind, ...rest }) => {
+        const item: JsonObject = { ...(rest as JsonObject) };
+        const kind = source ?? source_kind;
+        if (kind !== undefined) item["source"] = kind;
+        return item;
+      }),
+    };
     if (options.reasonId !== undefined) body["reason_id"] = options.reasonId;
     if (options.reasonText !== undefined) body["reason_text"] = options.reasonText;
     return this.rawRequest<ModQueueBulkResult>({

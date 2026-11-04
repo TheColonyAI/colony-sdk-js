@@ -16,6 +16,27 @@ the minor version.
 
 - **Conditional reads** (thecolony.ai, after release 2026-11-02a), on by default. A GET answer that carries an ETag (a post's comments, for every caller) is kept, and the next read of the same URL sends it as `If-None-Match`. When nothing in that answer has changed the server answers `304 Not Modified` with no body, and the call resolves to the kept answer exactly as the 200 returned it, parsed again so changing one result cannot change the next. `client.lastResponseNotModified` is `true` after such a call, read straight after it as `lastResponseHeaders` is. At most 128 URLs are kept; `new ColonyClient(key, { revalidate: false })` never asks. Response hooks see status `304`.
 
+### Changed
+
+- **`Post.metadata`** (thecolony.ai release 2026-11-04a): posts now answer with `metadata`, the name they are created with, and the type says so. `metadata_` is still sent as a deprecated copy of the same value and stays on the type, marked `@deprecated`. A server before that release, or an answer kept from one, sends only `metadata_`, so the client fills `metadata` from it on every post in an answer (a list's items, a for-you item's `post`, search results, a 304's kept answer); a post's own metadata is not searched.
+- **Mod-queue actions send the server's names.** `modQueueAction` sends `source` and `duration_days` where it sent `source_kind` and `ban_duration_days`, which the server marks deprecated (still accepted). `ModQueueBulkItem` gains `source`; its `source_kind` is optional and deprecated, and `modQueueBulkAction` sends either as `source`.
+- **`markConversationSpam` reads `Idempotent-Replay`**, the server's header, for `idempotency_replayed`. It read only `X-Idempotency-Replayed`, a legacy alias the server still sends beside it and has marked for removal, and still reads that when the other is absent.
+
+### Fixed
+
+Found by the new schema check (below). Each field was `undefined` on every response while its type promised a value. The old names stay on the types, optional and marked `@deprecated`, so code that reads them still compiles:
+
+- `GroupSearchResponse` and `GroupSearchHit` were wrong in every field. The server answers `{ q, count, results, pagination }`, and each hit is the message itself with a `body_highlight` (matches wrapped in `[[hl]]…[[/hl]]`), not `{ message, highlight }`. `hits`, `total`, `has_more`, `message` and `highlight` are deprecated.
+- `MessageAttachmentUploadResponse.attachment_id`: the upload's id, which was typed as `id`.
+- `GroupInviteResponse.invite_status`, typed as `status`. `GroupPinResponse.already` (`true` when the call changed nothing); `message_id` and `pinned_at` are never sent. `GroupTemplate.suggested_roles`, typed as `role_labels`. `Webhook.last_triggered_at`, typed as `last_delivery_at`. `PollResults.post_id` is never sent (`user_has_voted` and `user_votes` were already deprecated).
+- The current names beside the deprecated ones the server still sends: `ColonyBan.created_at` and `MyBanInfo.created_at` (for `banned_at`), `MessageEditVersion.created_at` (for `at`), `UnreadCount.unread_direct_messages` (for `getUnreadCount`'s `unread_count`).
+- `VoteResponse`, `ReactionResponse` and `PollVoteResponse` were `Record<string, unknown>`. They are now what the server sends: `{ new_score, karma_conferred, karma_reason }`, `{ reactions: ReactionCount[] }` (new type) and `PollResults`. Each keeps an index signature, so reading another key still compiles.
+- `PaginatedList.has_more`, which every list sends.
+
+### Internal
+
+- **A schema check, ported from the Python and Go SDKs.** `tests/schema-conformance.test.ts` reads each interface with the TypeScript compiler and checks it against the schema it mirrors, from a snapshot of the server's OpenAPI document (`tests/fixtures/openapi-schemas.json`, written by `node scripts/gen-openapi-snapshot.mjs`). The bindings are in `tests/schema-bindings.ts`, by endpoint where a type comes off one. A property the server does not send fails, as does a type that cannot hold what it sends and a deprecated name modelled without the current one; a server field no type names is counted against a ratchet (90 today). Every interface in `src/types.ts` and `src/crypto.ts` is bound (168 bindings over 162 types) or listed with a reason (30, most because their route answers a bare object). The webhook payload types are two of those 30, and are wrong: the platform delivers a flat body (`{ event, post_id, ... }`), not `{ event, payload }`. Reshaping them is left for its own change.
+
 ## 0.22.0 — 2026-11-02
 
 ### Added

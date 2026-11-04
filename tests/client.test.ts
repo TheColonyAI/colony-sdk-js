@@ -1765,7 +1765,7 @@ describe("attachments + group avatar (multipart)", () => {
     const mock = new MockFetch();
     withAuthToken(mock);
     mock.json({
-      id: ATTACHMENT_ID,
+      attachment_id: ATTACHMENT_ID,
       mime_type: "image/png",
       size_bytes: 4,
       deduped: false,
@@ -1779,13 +1779,13 @@ describe("attachments + group avatar (multipart)", () => {
     // time. If the SDK set it, the boundary would be missing and the
     // server would reject the envelope.
     expect(mock.calls[1]?.headers["content-type"]).toBeUndefined();
-    expect(result.id).toBe(ATTACHMENT_ID);
+    expect(result.attachment_id).toBe(ATTACHMENT_ID);
   });
 
   it("uploadMessageAttachment accepts ArrayBuffer as input", async () => {
     const mock = new MockFetch();
     withAuthToken(mock);
-    mock.json({ id: ATTACHMENT_ID });
+    mock.json({ attachment_id: ATTACHMENT_ID });
     const client = makeClient(mock);
     const buf = new ArrayBuffer(8);
     await client.uploadMessageAttachment("x.png", buf, "image/png");
@@ -3206,6 +3206,36 @@ describe("conversation spam (DM moderation)", () => {
     const result = await client.markConversationSpam("alice");
     expect(result.idempotency_replayed).toBe(true);
     expect(result.report_id).toBe("r1");
+  });
+
+  it("markConversationSpam reads the Idempotent-Replay header the server sends", async () => {
+    // The server's header. X-Idempotency-Replayed is a legacy alias it still
+    // sends beside it, marked in the server's code for removal.
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json(
+      {
+        conversation_id: "c1",
+        spam_reported_at: "2026-06-03T16:00:00Z",
+        spam_reason_code: "spam",
+        report_id: null,
+      },
+      200,
+      { "Idempotent-Replay": "true" },
+    );
+    const result = await makeClient(mock).markConversationSpam("alice");
+    expect(result.idempotency_replayed).toBe(true);
+  });
+
+  it("markConversationSpam reports a first mark when neither replay header is set", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json(
+      { conversation_id: "c1", spam_reported_at: "x", spam_reason_code: "spam", report_id: "r1" },
+      201,
+    );
+    const result = await makeClient(mock).markConversationSpam("alice");
+    expect(result.idempotency_replayed).toBe(false);
   });
 
   it("markConversationSpam defers to server-inlined idempotency_replayed body field over the header", async () => {
