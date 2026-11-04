@@ -985,15 +985,9 @@ const TOKEN_EXCHANGE_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:token-exchan
 /** RFC 8693 §3 token type identifier for an access token. */
 const TOKEN_TYPE_ACCESS_TOKEN = "urn:ietf:params:oauth:token-type:access_token";
 
-/**
- * Prefix for the OIDC endpoints.
- *
- * `baseUrl` points at the JSON API (`https://thecolony.ai/api/v1`), but
- * `/oauth/token` is mounted at the SITE root, not under `/api/v1`. Strip the
- * API suffix when present — that also keeps a deployment hosted under a
- * sub-path (`https://host/colony/api/v1`) working, which naively taking
- * scheme+host would break. Fall back to the origin otherwise.
- */
+/** A UUID path segment, replaced by `{id}` so a route is reported once. */
+const UUID_SEGMENT = /\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?=\/|$)/gi;
+
 /** A JSON body, or `{}` for an empty or unparseable one. */
 function parseBody(text: string): unknown {
   if (!text) return {};
@@ -1004,6 +998,15 @@ function parseBody(text: string): unknown {
   }
 }
 
+/**
+ * Prefix for the OIDC endpoints.
+ *
+ * `baseUrl` points at the JSON API (`https://thecolony.ai/api/v1`), but
+ * `/oauth/token` is mounted at the SITE root, not under `/api/v1`. Strip the
+ * API suffix when present — that also keeps a deployment hosted under a
+ * sub-path (`https://host/colony/api/v1`) working, which naively taking
+ * scheme+host would break. Fall back to the origin otherwise.
+ */
 function oauthRoot(baseUrl: string): string {
   const trimmed = baseUrl.replace(/\/$/, "");
   if (trimmed.endsWith("/api/v1")) return trimmed.slice(0, -"/api/v1".length);
@@ -1358,6 +1361,11 @@ export class ColonyClient {
    */
   public lastResponseHeaders: Record<string, string> = {};
 
+  /** Where API warnings go (see {@link ColonyClientOptions.onWarning}). */
+  private readonly onWarning: (message: string) => void;
+  /** `route name` pairs already reported, so a polling loop warns once. */
+  private readonly warned = new Set<string>();
+
   /**
    * True when the most recent request was answered `304 Not Modified` and
    * returned the answer this client kept from its last read of that URL:
@@ -1394,6 +1402,7 @@ export class ColonyClient {
           ? options.tokenCache
           : _globalTokenCache;
     this.totp = options.totp;
+    this.onWarning = options.onWarning ?? ((message: string) => console.warn(message));
     this.keptMax = options.revalidate === false ? 0 : 128;
   }
 
@@ -1406,6 +1415,22 @@ export class ColonyClient {
       const oldest = this.kept.keys().next().value;
       if (oldest === undefined) break;
       this.kept.delete(oldest);
+    }
+  }
+
+  /** Report each query parameter an `X-Colony-Ignored-Params` header names, once per route. */
+  private warnIgnoredParams(method: string, path: string, header: string | undefined): void {
+    if (!header) return;
+    const route = `${method} ${(path.split("?", 1)[0] ?? path).replace(UUID_SEGMENT, "/{id}")}`;
+    for (const raw of header.split(",")) {
+      const name = raw.trim();
+      const key = `${route} ${name}`;
+      if (!name || this.warned.has(key)) continue;
+      this.warned.add(key);
+      const shown = name === "..." ? "parameters it would not echo" : `query parameter '${name}'`;
+      this.onWarning(
+        `The Colony API ignored ${shown}: ${route} does not accept it, so it changed nothing`,
+      );
     }
   }
 
@@ -2021,6 +2046,7 @@ export class ColonyClient {
     response.headers.forEach((value, key) => {
       this.lastResponseHeaders[key.toLowerCase()] = value;
     });
+    this.warnIgnoredParams(method, path, this.lastResponseHeaders["x-colony-ignored-params"]);
 
     // Not modified since the kept answer, which is returned as the 200
     // returned it, parsed again so a caller changing one result cannot
