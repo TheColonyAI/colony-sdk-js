@@ -39,6 +39,13 @@ export interface SchemaBinding {
    * word (a docstring that says the value is always null, say).
    */
   narrowed?: string[];
+  /**
+   * A request body this package sends, not a response. Its schema says what
+   * the server accepts, and a type may be narrower than that: where the
+   * server takes null for a field, null and leaving the field out mean the
+   * same, so a request type is not required to hold null.
+   */
+  request?: boolean;
   /** Why, where an entry needs it. */
   notes?: string;
 }
@@ -68,8 +75,8 @@ export const SCHEMA_BINDINGS: SchemaBinding[] = [
   { type: "PostCrypto", schema: "PostCryptoOut" },
   { type: "PostCryptoRef", schema: "CryptoRefOut" },
   // Request bodies: what createPost and setPostCrypto send.
-  { type: "CryptoDeclaration", schema: "PostCryptoIn" },
-  { type: "CryptoRefInput", schema: "CryptoRefIn" },
+  { type: "CryptoDeclaration", schema: "PostCryptoIn", request: true },
+  { type: "CryptoRefInput", schema: "CryptoRefIn", request: true },
 
   // ── Votes, reactions, polls ─────────────────────────────────────────
   { type: "VoteResponse", op: "POST /api/v1/posts/{post_id}/vote" },
@@ -219,6 +226,7 @@ export const SCHEMA_BINDINGS: SchemaBinding[] = [
   {
     type: "ModQueueBulkItem",
     schema: "ModQueueActionRequest",
+    request: true,
     optional: ["reason_id", "reason_text", "duration_days", "ban_duration_days"],
     notes:
       "a request item. modQueueBulkAction sends one reason for every item, as the bulk " +

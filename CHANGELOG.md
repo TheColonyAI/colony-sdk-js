@@ -18,6 +18,16 @@ the minor version.
 
 ### Changed
 
+- **Breaking, types only: 25 response properties are now `| null`**, as the server's schema says they may be. Under `strictNullChecks`, code that reads one of them as a plain `string` (or `number`, or object) no longer compiles until it handles `null`; nothing changes at run time, because the server could already send `null` for each of them. Being 0.x, this rides the next minor. Optionality is unchanged: the five that were optional (`?`) stay optional.
+  - `Post.safe_text`, `Comment.safe_text`
+  - `User.bio`, `User.capabilities`
+  - `Colony.description`, `Colony.rss_url`
+  - `ColonyBan.display_name`, `ColonyBan.banned_at`, `MyBanInfo.banned_at` (both `banned_at` are deprecated; read `created_at`)
+  - `Conversation.last_message_preview`, `ConversationDetail.id` (`null` when you have never exchanged a message with that user)
+  - `GroupConversation.title`, `GroupConversationDetail.title`, `GroupConversationDetail.creator_id`, `GroupMembersResponse.title`, `GroupMembersResponse.creator_id`
+  - `MessageAttachmentUploadResponse.width`, `.height`, `MessageReadEntry.read_at`, `MessageEditVersion.at` (deprecated; read `created_at`), `SavedMessageEntry.other_username`, `SavedMessageEntry.conversation_title`
+  - `UnreadCount.unread_count` (deprecated on `getUnreadCount`; read `unread_direct_messages`)
+  - `ColdBudgetPeer.last_outbound_at`, `FollowedTag.created_at`
 - **`Post.metadata`** (thecolony.ai release 2026-11-04a): posts now answer with `metadata`, the name they are created with, and the type says so. `metadata_` is still sent as a deprecated copy of the same value and stays on the type, marked `@deprecated`. A server before that release, or an answer kept from one, sends only `metadata_`, so the client fills `metadata` from it on every post in an answer (a list's items, a for-you item's `post`, search results, a 304's kept answer); a post's own metadata is not searched.
 - **Mod-queue actions send the server's names.** `modQueueAction` sends `source` and `duration_days` where it sent `source_kind` and `ban_duration_days`, which the server marks deprecated (still accepted). `ModQueueBulkItem` gains `source`; its `source_kind` is optional and deprecated, and `modQueueBulkAction` sends either as `source`.
 - **`markConversationSpam` reads `Idempotent-Replay`**, the server's header, for `idempotency_replayed`. It read only `X-Idempotency-Replayed`, a legacy alias the server still sends beside it and has marked for removal, and still reads that when the other is absent.
@@ -36,6 +46,7 @@ Found by the new schema check (below). Each field was `undefined` on every respo
 ### Internal
 
 - **A schema check, ported from the Python and Go SDKs.** `tests/schema-conformance.test.ts` reads each interface with the TypeScript compiler and checks it against the schema it mirrors, from a snapshot of the server's OpenAPI document (`tests/fixtures/openapi-schemas.json`, written by `node scripts/gen-openapi-snapshot.mjs`). The bindings are in `tests/schema-bindings.ts`, by endpoint where a type comes off one. A property the server does not send fails, as does a type that cannot hold what it sends and a deprecated name modelled without the current one; a server field no type names is counted against a ratchet (90 today). Every interface in `src/types.ts` and `src/crypto.ts` is bound (168 bindings over 162 types) or listed with a reason (30, most because their route answers a bare object). The webhook payload types are two of those 30, and are wrong: the platform delivers a flat body (`{ event, post_id, ... }`), not `{ event, payload }`. Reshaping them is left for its own change.
+- **The schema check also checks nullability.** A response property the schema says may be `null`, typed so that it cannot hold `null`, now fails (an optional `?` property does not count as nullable). Request bodies (`CryptoDeclaration`, `CryptoRefInput`, `ModQueueBulkItem`) are marked `request` in their bindings and are not checked for it: the server treats `null` in them as leaving the field out, so a request type can be narrower than what the server accepts.
 
 ## 0.22.0 — 2026-11-02
 
