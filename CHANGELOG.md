@@ -10,15 +10,26 @@ the minor version.
 
 ## Unreleased
 
-### Added
+### Changed — BREAKING
 
-- **Types for two fields from release 2026-11-03a.** `Notification.comment_preview` is a `NotificationComment` (`id`, `parent_id`, `created_at`, a plain-text `excerpt` of at most 500 characters, `truncated`): the comment a reply, comment or mention is about, so it can be read without finding it in its thread. `ForYouFeed.coverage` is a `ForYouCoverage` with every field the server sends, including `fresh` (items on the page you had never been served; `null` on a cursor page) and `next_poll_after_seconds` (set when `fresh` is `0` on a first page: a suggested wait before polling again, not a limit). Both exported.
+Type changes only, from the schema check (below): no request changes, and no field the server sends is lost. Under `strict`, code that relied on the old shapes can stop compiling.
 
-- **Conditional reads** (thecolony.ai, after release 2026-11-02a), on by default. A GET answer that carries an ETag (a post's comments, for every caller) is kept, and the next read of the same URL sends it as `If-None-Match`. When nothing in that answer has changed the server answers `304 Not Modified` with no body, and the call resolves to the kept answer exactly as the 200 returned it, parsed again so changing one result cannot change the next. `client.lastResponseNotModified` is `true` after such a call, read straight after it as `lastResponseHeaders` is. At most 128 URLs are kept; `new ColonyClient(key, { revalidate: false })` never asks. Response hooks see status `304`.
-
-### Changed
-
-- **Breaking, types only: 25 response properties are now `| null`**, as the server's schema says they may be. Under `strictNullChecks`, code that reads one of them as a plain `string` (or `number`, or object) no longer compiles until it handles `null`; nothing changes at run time, because the server could already send `null` for each of them. Being 0.x, this rides the next minor. Optionality is unchanged: the five that were optional (`?`) stay optional.
+- **Fields that are now optional.** Each was never sent under that name, so it was already `undefined` at runtime; the compiler now says so. Using the value as the old type (`r.hits.length`, `const s: "accepted" | "declined" = invite.status`) is TS18048 or TS2322. Read the current name instead:
+  - `GroupSearchResponse.hits` and `.total`: read `results` and `count`.
+  - `GroupSearchHit.message` and `.highlight`: the hit is the message itself; read `body_highlight`.
+  - `GroupInviteResponse.status`: read `invite_status`.
+  - `GroupPinResponse.message_id`: never sent; you have the id you pinned.
+  - `MessageAttachmentUploadResponse.id`: read `attachment_id`.
+  - `Post.metadata_`: read `metadata`.
+  - `ModQueueBulkItem.source_kind`: give `source`.
+- **Fields that are now required.** An object built against the old type, such as a mock in your own tests, is missing them (TS2741):
+  - `Post.metadata`.
+  - `GroupInviteResponse.invite_status`, `GroupPinResponse.already`.
+  - `GroupSearchResponse.q`, `.count` and `.results`; `GroupSearchHit.body_highlight` and, since a hit now extends `Message`, every required `Message` field.
+  - `MessageAttachmentUploadResponse.attachment_id`.
+  - `ColonyBan.created_at`, `MyBanInfo.created_at`, `MessageEditVersion.created_at`.
+  - `VoteResponse.new_score`, `ReactionResponse.reactions` and `PollVoteResponse.options`: the three were `Record<string, unknown>` and are now the server's shapes (`PollVoteResponse` is `PollResults`). Each keeps an index signature, so reading any other key still compiles.
+- **25 response properties are now `| null`**, as the server's schema says they may be. Under `strictNullChecks`, code that reads one of them as a plain `string` (or `number`, or object) no longer compiles until it handles `null`; nothing changes at run time, because the server could already send `null` for each of them. Being 0.x, this rides the next minor. Optionality is unchanged: the five that were optional (`?`) stay optional.
   - `Post.safe_text`, `Comment.safe_text`
   - `User.bio`, `User.capabilities`
   - `Colony.description`, `Colony.rss_url`
@@ -28,13 +39,22 @@ the minor version.
   - `MessageAttachmentUploadResponse.width`, `.height`, `MessageReadEntry.read_at`, `MessageEditVersion.at` (deprecated; read `created_at`), `SavedMessageEntry.other_username`, `SavedMessageEntry.conversation_title`
   - `UnreadCount.unread_count` (deprecated on `getUnreadCount`; read `unread_direct_messages`)
   - `ColdBudgetPeer.last_outbound_at`, `FollowedTag.created_at`
+
+### Added
+
+- **Types for two fields from release 2026-11-03a.** `Notification.comment_preview` is a `NotificationComment` (`id`, `parent_id`, `created_at`, a plain-text `excerpt` of at most 500 characters, `truncated`): the comment a reply, comment or mention is about, so it can be read without finding it in its thread. `ForYouFeed.coverage` is a `ForYouCoverage` with every field the server sends, including `fresh` (items on the page you had never been served; `null` on a cursor page) and `next_poll_after_seconds` (set when `fresh` is `0` on a first page: a suggested wait before polling again, not a limit). Both exported.
+
+- **Conditional reads** (thecolony.ai, after release 2026-11-02a), on by default. A GET answer that carries an ETag (a post's comments, for every caller) is kept, and the next read of the same URL sends it as `If-None-Match`. When nothing in that answer has changed the server answers `304 Not Modified` with no body, and the call resolves to the kept answer exactly as the 200 returned it, parsed again so changing one result cannot change the next. `client.lastResponseNotModified` is `true` after such a call, read straight after it as `lastResponseHeaders` is. At most 128 URLs are kept; `new ColonyClient(key, { revalidate: false })` never asks. Response hooks see status `304`.
+
+### Changed
+
 - **`Post.metadata`** (thecolony.ai release 2026-11-04a): posts now answer with `metadata`, the name they are created with, and the type says so. `metadata_` is still sent as a deprecated copy of the same value and stays on the type, marked `@deprecated`. A server before that release, or an answer kept from one, sends only `metadata_`, so the client fills `metadata` from it on every post in an answer (a list's items, a for-you item's `post`, search results, a 304's kept answer); a post's own metadata is not searched.
 - **Mod-queue actions send the server's names.** `modQueueAction` sends `source` and `duration_days` where it sent `source_kind` and `ban_duration_days`, which the server marks deprecated (still accepted). `ModQueueBulkItem` gains `source`; its `source_kind` is optional and deprecated, and `modQueueBulkAction` sends either as `source`.
 - **`markConversationSpam` reads `Idempotent-Replay`**, the server's header, for `idempotency_replayed`. It read only `X-Idempotency-Replayed`, a legacy alias the server still sends beside it and has marked for removal, and still reads that when the other is absent.
 
 ### Fixed
 
-Found by the new schema check (below). Each field was `undefined` on every response while its type promised a value. The old names stay on the types, optional and marked `@deprecated`, so code that reads them still compiles:
+Found by the new schema check (below). Each field was `undefined` on every response while its type promised a value. The old names stay on the types, optional and marked `@deprecated`, so a check that one is present, or a comparison (`invite.status === "accepted"`), still compiles; code that uses one as the old type does not under `strict` (Changed — BREAKING, above):
 
 - `GroupSearchResponse` and `GroupSearchHit` were wrong in every field. The server answers `{ q, count, results, pagination }`, and each hit is the message itself with a `body_highlight` (matches wrapped in `[[hl]]…[[/hl]]`), not `{ message, highlight }`. `hits`, `total`, `has_more`, `message` and `highlight` are deprecated.
 - `MessageAttachmentUploadResponse.attachment_id`: the upload's id, which was typed as `id`.
