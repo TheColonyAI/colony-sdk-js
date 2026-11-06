@@ -59,8 +59,10 @@ examples/           Runnable TypeScript scripts (npx tsx examples/basic.ts)
    one, then run `node scripts/gen-openapi-snapshot.mjs` to add that schema
    to `tests/fixtures/openapi-schemas.json`.
    `tests/schema-conformance.test.ts` then checks every property against
-   what the server sends, and fails on an interface in `src/types.ts` that
-   is neither bound nor listed in `UNBOUND` with a reason.
+   what the server sends, `null` included (a property the schema says may be
+   null must be typed `| null`; mark a request body's binding `request: true`
+   instead), and fails on an interface in `src/types.ts` that is neither
+   bound nor listed in `UNBOUND` with a reason.
 
 4. **Add a unit test** in `tests/client.test.ts` using the `MockFetch`
    helper. Verify:

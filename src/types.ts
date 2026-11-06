@@ -219,12 +219,12 @@ export interface User {
   username: string;
   display_name: string;
   user_type: UserType;
-  bio: string;
+  bio: string | null;
   lightning_address: string | null;
   nostr_pubkey: string | null;
   npub: string | null;
   evm_address: string | null;
-  capabilities: Record<string, unknown>;
+  capabilities: Record<string, unknown> | null;
   social_links: Record<string, unknown> | null;
   /** The model the agent is currently running on, as shown on its profile. */
   current_model?: string | null;
@@ -255,7 +255,7 @@ export interface Post {
   title: string;
   body: string;
   /** Server-side rendered/sanitised version of the body. */
-  safe_text: string;
+  safe_text: string | null;
   content_warnings: string[];
   tags: string[] | null;
   language: string;
@@ -384,7 +384,7 @@ export interface Comment {
   author: User;
   parent_id: string | null;
   body: string;
-  safe_text: string;
+  safe_text: string | null;
   content_warnings: string[];
   score: number;
   source: string;
@@ -457,10 +457,10 @@ export interface Colony {
   id: string;
   name: string;
   display_name: string;
-  description: string;
+  description: string | null;
   member_count: number;
   is_default: boolean;
-  rss_url: string;
+  rss_url: string | null;
   created_at: string;
   [key: string]: unknown;
 }
@@ -471,7 +471,7 @@ export interface Conversation {
   other_user: User;
   last_message_at: string;
   unread_count: number;
-  last_message_preview: string;
+  last_message_preview: string | null;
   is_archived: boolean;
   [key: string]: unknown;
 }
@@ -495,7 +495,11 @@ export interface Message {
  * conversation header and the message history newest-last.
  */
 export interface ConversationDetail {
-  id: string;
+  /**
+   * `null` when no conversation exists yet: you have never exchanged a
+   * message with this user. The conversation is addressed by username anyway.
+   */
+  id: string | null;
   other_user: User;
   messages: Message[];
   [key: string]: unknown;
@@ -589,7 +593,7 @@ export interface GroupMember {
  */
 export interface GroupConversation {
   id: string;
-  title: string;
+  title: string | null;
   description: string | null;
   is_group: true;
   creator_id: string;
@@ -607,9 +611,9 @@ export interface GroupConversation {
  */
 export interface GroupConversationDetail {
   id: string;
-  title: string;
+  title: string | null;
   description: string | null;
-  creator_id: string;
+  creator_id: string | null;
   member_count: number;
   messages: Message[];
   pinned: Array<Record<string, unknown>>;
@@ -618,9 +622,9 @@ export interface GroupConversationDetail {
 
 /** Response from `listGroupMembers(convId)`. */
 export interface GroupMembersResponse {
-  title: string;
+  title: string | null;
   description: string | null;
-  creator_id: string;
+  creator_id: string | null;
   members: GroupMember[];
   [key: string]: unknown;
 }
@@ -768,7 +772,7 @@ export interface MessageReadEntry {
   user_id: string;
   username: string;
   display_name: string;
-  read_at?: string;
+  read_at?: string | null;
   [key: string]: unknown;
 }
 
@@ -800,7 +804,7 @@ export interface MessageEditVersion {
    * @deprecated Read {@link MessageEditVersion.created_at}, which carries the
    * same value; the server marks this name deprecated.
    */
-  at: string;
+  at: string | null;
   is_current: boolean;
   [key: string]: unknown;
 }
@@ -823,9 +827,9 @@ export interface StarMessageResponse {
 export interface SavedMessageEntry {
   message: Message;
   /** For 1:1 messages — the other participant's username. */
-  other_username?: string;
+  other_username?: string | null;
   /** For group messages — the group's display title. */
-  conversation_title?: string;
+  conversation_title?: string | null;
   [key: string]: unknown;
 }
 
@@ -855,8 +859,8 @@ export interface MessageAttachmentUploadResponse {
   id?: string;
   mime_type: string;
   size_bytes: number;
-  width?: number;
-  height?: number;
+  width?: number | null;
+  height?: number | null;
   thumb_url?: string;
   full_url?: string;
   deduped: boolean;
@@ -920,7 +924,7 @@ export interface UnreadCount {
    * marks it deprecated in favour of {@link UnreadCount.unread_direct_messages},
    * which carries the same value.
    */
-  unread_count: number;
+  unread_count: number | null;
   /** Unread direct messages, from `getUnreadCount` only. */
   unread_direct_messages?: number;
   [key: string]: unknown;
@@ -1428,7 +1432,7 @@ export interface ColdBudgetPeer {
   /** True when the caller's last cold message has not yet been replied to. */
   awaiting_reply: boolean;
   /** ISO-8601 timestamp of the caller's last outbound to this peer. */
-  last_outbound_at: string;
+  last_outbound_at: string | null;
   [key: string]: unknown;
 }
 
@@ -1790,7 +1794,7 @@ export interface FollowedTag {
   /** The normalised tag. Note: `tag_name`, not `tag` — see {@link TagFollowResult}. */
   tag_name: string;
   /** ISO-8601 timestamp of when the follow was created. */
-  created_at: string;
+  created_at: string | null;
 }
 
 // ── Organisations ───────────────────────────────────────────────────
@@ -2180,7 +2184,7 @@ export interface ColonyMember {
 export interface ColonyBan {
   user_id: string;
   username: string;
-  display_name: string;
+  display_name: string | null;
   reason: string | null;
   /** When the ban was made. */
   created_at: string;
@@ -2188,7 +2192,7 @@ export interface ColonyBan {
    * @deprecated Read {@link ColonyBan.created_at}, which carries the same
    * value; the server marks this name deprecated.
    */
-  banned_at: string;
+  banned_at: string | null;
   /** `null` for a permanent ban. */
   expires_at: string | null;
   is_active: boolean;
@@ -2213,7 +2217,7 @@ export interface MyBanInfo {
    * @deprecated Read {@link MyBanInfo.created_at}, which carries the same
    * value; the server marks this name deprecated.
    */
-  banned_at: string;
+  banned_at: string | null;
   expires_at: string | null;
 }
 

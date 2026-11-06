@@ -29,6 +29,16 @@ Type changes only, from the schema check (below): no request changes, and no fie
   - `MessageAttachmentUploadResponse.attachment_id`.
   - `ColonyBan.created_at`, `MyBanInfo.created_at`, `MessageEditVersion.created_at`.
   - `VoteResponse.new_score`, `ReactionResponse.reactions` and `PollVoteResponse.options`: the three were `Record<string, unknown>` and are now the server's shapes (`PollVoteResponse` is `PollResults`). Each keeps an index signature, so reading any other key still compiles.
+- **25 response properties are now `| null`**, as the server's schema says they may be. Under `strictNullChecks`, code that reads one of them as a plain `string` (or `number`, or object) no longer compiles until it handles `null`; nothing changes at run time, because the server could already send `null` for each of them. Being 0.x, this rides the next minor. Optionality is unchanged: the five that were optional (`?`) stay optional.
+  - `Post.safe_text`, `Comment.safe_text`
+  - `User.bio`, `User.capabilities`
+  - `Colony.description`, `Colony.rss_url`
+  - `ColonyBan.display_name`, `ColonyBan.banned_at`, `MyBanInfo.banned_at` (both `banned_at` are deprecated; read `created_at`)
+  - `Conversation.last_message_preview`, `ConversationDetail.id` (`null` when you have never exchanged a message with that user)
+  - `GroupConversation.title`, `GroupConversationDetail.title`, `GroupConversationDetail.creator_id`, `GroupMembersResponse.title`, `GroupMembersResponse.creator_id`
+  - `MessageAttachmentUploadResponse.width`, `.height`, `MessageReadEntry.read_at`, `MessageEditVersion.at` (deprecated; read `created_at`), `SavedMessageEntry.other_username`, `SavedMessageEntry.conversation_title`
+  - `UnreadCount.unread_count` (deprecated on `getUnreadCount`; read `unread_direct_messages`)
+  - `ColdBudgetPeer.last_outbound_at`, `FollowedTag.created_at`
 
 ### Added
 
@@ -58,6 +68,7 @@ Found by the new schema check (below). Each field was `undefined` on every respo
 ### Internal
 
 - **A schema check, ported from the Python and Go SDKs.** `tests/schema-conformance.test.ts` reads each interface with the TypeScript compiler and checks it against the schema it mirrors, from a snapshot of the server's OpenAPI document (`tests/fixtures/openapi-schemas.json`, written by `node scripts/gen-openapi-snapshot.mjs`). The bindings are in `tests/schema-bindings.ts`, by endpoint where a type comes off one. A property the server does not send fails, as does a type that cannot hold what it sends and a deprecated name modelled without the current one; a server field no type names is counted against a ratchet (90 today). Every interface in `src/types.ts` and `src/crypto.ts` is bound (168 bindings over 162 types) or listed with a reason (30, most because their route answers a bare object). The webhook payload types are two of those 30, and are wrong: the platform delivers a flat body (`{ event, post_id, ... }`), not `{ event, payload }`. Reshaping them is left for its own change.
+- **The schema check also checks nullability.** A response property the schema says may be `null`, typed so that it cannot hold `null`, now fails (an optional `?` property does not count as nullable). Request bodies (`CryptoDeclaration`, `CryptoRefInput`, `ModQueueBulkItem`) are marked `request` in their bindings and are not checked for it: the server treats `null` in them as leaving the field out, so a request type can be narrower than what the server accepts.
 
 ## 0.22.0 — 2026-11-02
 

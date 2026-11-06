@@ -24,6 +24,11 @@
  *   `string` where the server sends an integer) is the **wrong type** and
  *   fails, unless the binding says the type is narrower on the server's own
  *   word (`narrowed`);
+ * - a property the schema says may be null, typed so that it cannot hold
+ *   null, is **non-nullable** and fails: a caller the compiler lets skip the
+ *   null check reads `.length` of null. Request bodies (`request`) are not
+ *   checked for this, because a type this package sends may be narrower than
+ *   what the server accepts;
  * - a property the schema marks as the deprecated name of another
  *   (`x-deprecated-alias-of`) fails unless that other name is modelled too:
  *   the deprecated name is the one that goes away;
@@ -289,6 +294,7 @@ class TypeReader {
 interface Result {
   phantoms: string[];
   wrongTypes: string[];
+  nonNullable: string[];
   deprecatedOnly: string[];
   unmodelled: string[];
   stale: string[];
@@ -307,7 +313,14 @@ function check(
   for (const e of b.retired ?? []) absent.set(e, "retired");
   for (const e of b.client ?? []) absent.set(e, "client");
   const narrowed = new Set(b.narrowed ?? []);
-  const r: Result = { phantoms: [], wrongTypes: [], deprecatedOnly: [], unmodelled: [], stale: [] };
+  const r: Result = {
+    phantoms: [],
+    wrongTypes: [],
+    nonNullable: [],
+    deprecatedOnly: [],
+    unmodelled: [],
+    stale: [],
+  };
 
   for (const [name, prop] of [...props].sort(([a], [c]) => (a < c ? -1 : 1))) {
     const sprop = sprops[name];
@@ -320,8 +333,11 @@ function check(
       continue;
     }
     const sent = sentKinds(sprop, schemas);
-    sent.delete("null");
     const holds = prop.accepts;
+    if (!b.request && sent.has("null") && holds !== null && !holds.has("null")) {
+      r.nonNullable.push(`${name}: the server may send null, the type cannot hold it`);
+    }
+    sent.delete("null");
     const wrong = holds !== null && sent.size > 0 && ![...sent].every((k) => holds.has(k));
     if (wrong && !narrowed.has(name)) {
       r.wrongTypes.push(
@@ -384,6 +400,7 @@ describe("schema conformance", () => {
       const problems = [
         ...r.phantoms.map((p) => `${p} is not sent by ${name}, so it is never filled`),
         ...r.wrongTypes,
+        ...r.nonNullable,
         ...r.deprecatedOnly.map(
           (p) => `${p} is a deprecated name, modelled without the current one`,
         ),
@@ -503,6 +520,13 @@ describe("the checker", () => {
       [key: string]: unknown;
     }
     export interface Loose { id: string; difficulty: unknown; tags: any }
+    /** Null where the server may send it is missing, once required and once optional. */
+    export interface NotNull {
+      id: string;
+      tags: string[];
+      metadata?: Record<string, unknown>;
+      difficulty: number;
+    }
     /** Phantoms with a reason, and a type narrower than the schema's. */
     export interface Kept {
       id: string;
@@ -516,7 +540,7 @@ describe("the checker", () => {
 
   let toy: TypeReader;
   beforeAll(() => {
-    toy = new TypeReader(["Buggy", "Clean", "Loose", "Kept"], ["tests/__toy__.ts"], {
+    toy = new TypeReader(["Buggy", "Clean", "Loose", "Kept", "NotNull"], ["tests/__toy__.ts"], {
       "tests/__toy__.ts": TOY,
     });
   }, 120_000);
@@ -543,6 +567,7 @@ describe("the checker", () => {
     expect(run("Clean")).toEqual({
       phantoms: [],
       wrongTypes: [],
+      nonNullable: [],
       deprecatedOnly: [],
       unmodelled: [],
       stale: [],
@@ -556,6 +581,19 @@ describe("the checker", () => {
 
   it("says nothing about the type of unknown and any", () => {
     expect(run("Loose").wrongTypes).toEqual([]);
+    expect(run("Loose").nonNullable).toEqual([]);
+  });
+
+  it("finds a property the server may send as null that the type cannot hold", () => {
+    // `?` is not `| null`: an optional property still cannot hold null.
+    expect(run("NotNull").nonNullable).toEqual([
+      "metadata: the server may send null, the type cannot hold it",
+      "tags: the server may send null, the type cannot hold it",
+    ]);
+    // difficulty is not nullable in the schema, so a non-null number is right.
+    expect(run("NotNull").wrongTypes).toEqual([]);
+    // A request body may be narrower than what the server accepts.
+    expect(run("NotNull", { request: true }).nonNullable).toEqual([]);
   });
 
   it("an elsewhere and an optional entry silence exactly their name, and go stale", () => {
