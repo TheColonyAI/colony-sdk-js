@@ -1741,6 +1741,15 @@ export interface ColonyClientOptions {
    */
   totp?: TotpProvider;
   /**
+   * Where the client reports a problem the API flagged without failing the
+   * request; `console.warn` by default. Today that is a query parameter the
+   * route ignored (the `X-Colony-Ignored-Params` header): a filter that did
+   * nothing, so the answer holds more than was asked for, or a page
+   * parameter that did nothing, so it is the first page again. Reported once
+   * per route and name. Pass `() => {}` to silence it.
+   */
+  onWarning?: (message: string) => void;
+  /**
    * Conditional reads, on by default. A GET answer that carries an ETag (a
    * post's comments, for every caller) is kept, and the next read of the same
    * URL sends it as `If-None-Match`; when nothing in that answer has changed
