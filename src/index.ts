@@ -205,6 +205,7 @@ export type {
   PostVersion,
   PostVersionReplacedBy,
   ReactionEmoji,
+  ReactionCount,
   ReactionResponse,
   RegisterBeginResponse,
   RegisterConfirmResponse,

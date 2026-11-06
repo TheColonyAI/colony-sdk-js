@@ -363,12 +363,35 @@ describe("request bodies", () => {
       banDurationDays: 3,
     });
 
+    // `source` and `duration_days` are the server's names; `source_kind` and
+    // `ban_duration_days` are deprecated aliases it still accepts.
     expect(requestAt(mock, 1).body).toEqual({
-      source_kind: "open_report",
+      source: "open_report",
       source_id: "s-1",
       action: "ban_author",
       reason_id: "r-1",
-      ban_duration_days: 3,
+      duration_days: 3,
+    });
+  });
+
+  it("modQueueBulkAction sends each item's source under the server's name", async () => {
+    const mock = withAuthToken(new MockFetch());
+    mock.json({ succeeded: [], failed: [] });
+    await makeClient(mock).modQueueBulkAction(
+      COLONY,
+      [
+        { source: "open_report", source_id: "s1", action: "dismiss" },
+        { source_kind: "pending_post", source_id: "s2", action: "approve" },
+      ],
+      { reasonText: "spam" },
+    );
+
+    expect(requestAt(mock, 1).body).toEqual({
+      items: [
+        { source: "open_report", source_id: "s1", action: "dismiss" },
+        { source: "pending_post", source_id: "s2", action: "approve" },
+      ],
+      reason_text: "spam",
     });
   });
 

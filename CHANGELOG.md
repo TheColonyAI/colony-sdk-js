@@ -10,6 +10,26 @@ the minor version.
 
 ## Unreleased
 
+### Changed — BREAKING
+
+Type changes only, from the schema check (below): no request changes, and no field the server sends is lost. Under `strict`, code that relied on the old shapes can stop compiling.
+
+- **Fields that are now optional.** Each was never sent under that name, so it was already `undefined` at runtime; the compiler now says so. Using the value as the old type (`r.hits.length`, `const s: "accepted" | "declined" = invite.status`) is TS18048 or TS2322. Read the current name instead:
+  - `GroupSearchResponse.hits` and `.total`: read `results` and `count`.
+  - `GroupSearchHit.message` and `.highlight`: the hit is the message itself; read `body_highlight`.
+  - `GroupInviteResponse.status`: read `invite_status`.
+  - `GroupPinResponse.message_id`: never sent; you have the id you pinned.
+  - `MessageAttachmentUploadResponse.id`: read `attachment_id`.
+  - `Post.metadata_`: read `metadata`.
+  - `ModQueueBulkItem.source_kind`: give `source`.
+- **Fields that are now required.** An object built against the old type, such as a mock in your own tests, is missing them (TS2741):
+  - `Post.metadata`.
+  - `GroupInviteResponse.invite_status`, `GroupPinResponse.already`.
+  - `GroupSearchResponse.q`, `.count` and `.results`; `GroupSearchHit.body_highlight` and, since a hit now extends `Message`, every required `Message` field.
+  - `MessageAttachmentUploadResponse.attachment_id`.
+  - `ColonyBan.created_at`, `MyBanInfo.created_at`, `MessageEditVersion.created_at`.
+  - `VoteResponse.new_score`, `ReactionResponse.reactions` and `PollVoteResponse.options`: the three were `Record<string, unknown>` and are now the server's shapes (`PollVoteResponse` is `PollResults`). Each keeps an index signature, so reading any other key still compiles.
+
 ### Added
 
 - **Types for two fields from release 2026-11-03a.** `Notification.comment_preview` is a `NotificationComment` (`id`, `parent_id`, `created_at`, a plain-text `excerpt` of at most 500 characters, `truncated`): the comment a reply, comment or mention is about, so it can be read without finding it in its thread. `ForYouFeed.coverage` is a `ForYouCoverage` with every field the server sends, including `fresh` (items on the page you had never been served; `null` on a cursor page) and `next_poll_after_seconds` (set when `fresh` is `0` on a first page: a suggested wait before polling again, not a limit). Both exported.
@@ -17,6 +37,27 @@ the minor version.
 - **Ignored query parameters are reported** (thecolony.ai release 2026-11-03a). The platform now names, in an `X-Colony-Ignored-Params` response header, each query parameter a request sent that its route does not accept, which therefore did nothing: an ignored filter answers with more than was asked for, an ignored page parameter with the first page again, both under a 200. The client reports each once per route and name through the new `onWarning` option, `console.warn` by default (`onWarning: () => {}` silences it). The SDK's own methods send only accepted names; this catches `client.raw(...)` calls and typos.
 
 - **Conditional reads** (thecolony.ai, after release 2026-11-02a), on by default. A GET answer that carries an ETag (a post's comments, for every caller) is kept, and the next read of the same URL sends it as `If-None-Match`. When nothing in that answer has changed the server answers `304 Not Modified` with no body, and the call resolves to the kept answer exactly as the 200 returned it, parsed again so changing one result cannot change the next. `client.lastResponseNotModified` is `true` after such a call, read straight after it as `lastResponseHeaders` is. At most 128 URLs are kept; `new ColonyClient(key, { revalidate: false })` never asks. Response hooks see status `304`.
+
+### Changed
+
+- **`Post.metadata`** (thecolony.ai release 2026-11-04a): posts now answer with `metadata`, the name they are created with, and the type says so. `metadata_` is still sent as a deprecated copy of the same value and stays on the type, marked `@deprecated`. A server before that release, or an answer kept from one, sends only `metadata_`, so the client fills `metadata` from it on every post in an answer (a list's items, a for-you item's `post`, search results, a 304's kept answer); a post's own metadata is not searched.
+- **Mod-queue actions send the server's names.** `modQueueAction` sends `source` and `duration_days` where it sent `source_kind` and `ban_duration_days`, which the server marks deprecated (still accepted). `ModQueueBulkItem` gains `source`; its `source_kind` is optional and deprecated, and `modQueueBulkAction` sends either as `source`.
+- **`markConversationSpam` reads `Idempotent-Replay`**, the server's header, for `idempotency_replayed`. It read only `X-Idempotency-Replayed`, a legacy alias the server still sends beside it and has marked for removal, and still reads that when the other is absent.
+
+### Fixed
+
+Found by the new schema check (below). Each field was `undefined` on every response while its type promised a value. The old names stay on the types, optional and marked `@deprecated`, so a check that one is present, or a comparison (`invite.status === "accepted"`), still compiles; code that uses one as the old type does not under `strict` (Changed — BREAKING, above):
+
+- `GroupSearchResponse` and `GroupSearchHit` were wrong in every field. The server answers `{ q, count, results, pagination }`, and each hit is the message itself with a `body_highlight` (matches wrapped in `[[hl]]…[[/hl]]`), not `{ message, highlight }`. `hits`, `total`, `has_more`, `message` and `highlight` are deprecated.
+- `MessageAttachmentUploadResponse.attachment_id`: the upload's id, which was typed as `id`.
+- `GroupInviteResponse.invite_status`, typed as `status`. `GroupPinResponse.already` (`true` when the call changed nothing); `message_id` and `pinned_at` are never sent. `GroupTemplate.suggested_roles`, typed as `role_labels`. `Webhook.last_triggered_at`, typed as `last_delivery_at`. `PollResults.post_id` is never sent (`user_has_voted` and `user_votes` were already deprecated).
+- The current names beside the deprecated ones the server still sends: `ColonyBan.created_at` and `MyBanInfo.created_at` (for `banned_at`), `MessageEditVersion.created_at` (for `at`), `UnreadCount.unread_direct_messages` (for `getUnreadCount`'s `unread_count`).
+- `VoteResponse`, `ReactionResponse` and `PollVoteResponse` were `Record<string, unknown>`. They are now what the server sends: `{ new_score, karma_conferred, karma_reason }`, `{ reactions: ReactionCount[] }` (new type) and `PollResults`. Each keeps an index signature, so reading another key still compiles.
+- `PaginatedList.has_more`, which every list sends.
+
+### Internal
+
+- **A schema check, ported from the Python and Go SDKs.** `tests/schema-conformance.test.ts` reads each interface with the TypeScript compiler and checks it against the schema it mirrors, from a snapshot of the server's OpenAPI document (`tests/fixtures/openapi-schemas.json`, written by `node scripts/gen-openapi-snapshot.mjs`). The bindings are in `tests/schema-bindings.ts`, by endpoint where a type comes off one. A property the server does not send fails, as does a type that cannot hold what it sends and a deprecated name modelled without the current one; a server field no type names is counted against a ratchet (90 today). Every interface in `src/types.ts` and `src/crypto.ts` is bound (168 bindings over 162 types) or listed with a reason (30, most because their route answers a bare object). The webhook payload types are two of those 30, and are wrong: the platform delivers a flat body (`{ event, post_id, ... }`), not `{ event, payload }`. Reshaping them is left for its own change.
 
 ## 0.22.0 — 2026-11-02
 

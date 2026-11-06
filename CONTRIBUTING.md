@@ -54,6 +54,13 @@ examples/           Runnable TypeScript scripts (npx tsx examples/basic.ts)
    - Tag write requests with `client: CLIENT_NAME`.
 
 3. **Export** the new types and options interface from `src/index.ts`.
+   **Bind each response type** to the schema it mirrors in
+   `tests/schema-bindings.ts`, by the endpoint it comes off where it has
+   one, then run `node scripts/gen-openapi-snapshot.mjs` to add that schema
+   to `tests/fixtures/openapi-schemas.json`.
+   `tests/schema-conformance.test.ts` then checks every property against
+   what the server sends, and fails on an interface in `src/types.ts` that
+   is neither bound nor listed in `UNBOUND` with a reason.
 
 4. **Add a unit test** in `tests/client.test.ts` using the `MockFetch`
    helper. Verify:

@@ -18,6 +18,11 @@ export type JsonObject = Record<string, unknown>;
 export interface PaginatedList<T> {
   items: T[];
   total: number;
+  /**
+   * Whether there is more past this page. Every list sends it; keep paging
+   * until it is `false` rather than stopping on a short page.
+   */
+  has_more?: boolean;
   /** Some endpoints (`/posts/{id}/comments`) include a `page` field. */
   page?: number;
   [key: string]: unknown;
@@ -232,12 +237,7 @@ export interface User {
   [key: string]: unknown;
 }
 
-/**
- * A post in a colony.
- *
- * Note the trailing underscore on `metadata_` — that's how the server names
- * the field on the wire (Python reserved-word avoidance leaked into the API).
- */
+/** A post in a colony. */
 export interface Post {
   id: string;
   author: User;
@@ -259,8 +259,19 @@ export interface Post {
   content_warnings: string[];
   tags: string[] | null;
   language: string;
-  /** Per-post-type structured payload (poll options, finding sources, etc). */
-  metadata_: Record<string, unknown> | null;
+  /**
+   * Per-post-type structured payload (poll options, finding sources, etc).
+   * The server has sent it under this name since release 2026-11-04a. From an
+   * older server, or a response kept from one, the client fills it from
+   * `metadata_`, so it is set whichever the server sent.
+   */
+  metadata: Record<string, unknown> | null;
+  /**
+   * @deprecated Read {@link Post.metadata}, which carries the same value. The
+   * server still sends this name as a deprecated copy; it is the only one an
+   * older server sends.
+   */
+  metadata_?: Record<string, unknown> | null;
   score: number;
   comment_count: number;
   is_pinned: boolean;
@@ -530,10 +541,11 @@ export interface MarkConversationSpamOptions {
 /**
  * Returned by `markConversationSpam`. Merges the server envelope with one
  * SDK-side field — `idempotency_replayed` — so callers can distinguish first
- * mark (False, 201) from idempotent re-mark (True, 200 + `X-Idempotency-Replayed: true`
- * from the server) without poking at HTTP status codes. If the server later
- * inlines `idempotency_replayed` into the body envelope itself, the SDK
- * defers to it rather than clobbering with the header-derived value.
+ * mark (False, 201) from idempotent re-mark (True, 200 + `Idempotent-Replay: true`
+ * from the server, or the older `X-Idempotency-Replayed: true`) without poking
+ * at HTTP status codes. If the server later inlines `idempotency_replayed` into
+ * the body envelope itself, the SDK defers to it rather than clobbering with
+ * the header-derived value.
  */
 export interface MarkConversationSpamResponse {
   conversation_id: string;
@@ -618,6 +630,13 @@ export interface GroupTemplate {
   slug: string;
   title: string;
   description: string;
+  /** Roles the template suggests for the group's members. */
+  suggested_roles?: string[];
+  /**
+   * @deprecated The platform has never sent this field; it is
+   * {@link GroupTemplate.suggested_roles}. Kept so code that reads it still
+   * compiles.
+   */
   role_labels?: string[];
   starter_pinned_message?: string | null;
   [key: string]: unknown;
@@ -631,7 +650,14 @@ export interface GroupTemplatesResponse {
 
 /** Response from `respondToGroupInvite(convId, accept)`. */
 export interface GroupInviteResponse {
-  status: "accepted" | "declined";
+  /** Whether you accepted or declined. */
+  invite_status: "accepted" | "declined";
+  /**
+   * @deprecated The platform has never sent this field; it is
+   * {@link GroupInviteResponse.invite_status}. Kept so code that reads it
+   * still compiles.
+   */
+  status?: "accepted" | "declined";
   [key: string]: unknown;
 }
 
@@ -668,24 +694,71 @@ export interface GroupReadReceiptsResponse {
 
 /** Response from `pinGroupMessage` / `unpinGroupMessage`. */
 export interface GroupPinResponse {
+  /** Whether the message is pinned now. */
   pinned: boolean;
-  message_id: string;
+  /** `true` when the call changed nothing: a re-pin, or a re-unpin. */
+  already: boolean;
+  /**
+   * @deprecated The platform has never sent this field; you have the id you
+   * pinned. Kept so code that reads it still compiles.
+   */
+  message_id?: string;
+  /**
+   * @deprecated The platform has never sent this field. Kept so code that
+   * reads it still compiles.
+   */
   pinned_at?: string | null;
   [key: string]: unknown;
 }
 
-/** A single hit returned by `searchGroupMessages`. */
-export interface GroupSearchHit {
-  message: Message;
-  /** Matched terms wrapped in `<mark>…</mark>` for direct rendering. */
-  highlight: string;
-  [key: string]: unknown;
+/**
+ * A single hit returned by `searchGroupMessages`: the message itself, with
+ * its body highlighted.
+ */
+export interface GroupSearchHit extends Message {
+  /**
+   * The body with each match wrapped in `[[hl]]…[[/hl]]`, or `null`. The
+   * markers are plain text: escape the body before turning them into markup.
+   */
+  body_highlight: string | null;
+  /**
+   * @deprecated The platform has never sent this field: a hit is the message
+   * itself. Kept so code that reads it still compiles.
+   */
+  message?: Message;
+  /**
+   * @deprecated The platform has never sent this field; it is
+   * {@link GroupSearchHit.body_highlight}. Kept so code that reads it still
+   * compiles.
+   */
+  highlight?: string;
 }
 
 /** Response from `searchGroupMessages(convId, q)`. */
 export interface GroupSearchResponse {
-  hits: GroupSearchHit[];
-  total: number;
+  /** The search text, as the server read it. */
+  q: string;
+  /** How many hits are on this page. */
+  count: number;
+  results: GroupSearchHit[];
+  /** `has_more` says whether there are more hits past this page. */
+  pagination?: { total: number; has_more: boolean };
+  /**
+   * @deprecated The platform has never sent this field; it is
+   * {@link GroupSearchResponse.results}. Kept so code that reads it still
+   * compiles.
+   */
+  hits?: GroupSearchHit[];
+  /**
+   * @deprecated The platform has never sent this field; the page's count is
+   * {@link GroupSearchResponse.count}. Kept so code that reads it still
+   * compiles.
+   */
+  total?: number;
+  /**
+   * @deprecated The platform has never sent this field; it is
+   * `pagination.has_more`. Kept so code that reads it still compiles.
+   */
   has_more?: boolean;
   [key: string]: unknown;
 }
@@ -721,6 +794,12 @@ export interface MessageReaction {
 /** One version in the edit timeline returned by `listMessageEdits`. */
 export interface MessageEditVersion {
   body: string;
+  /** When this version was written. */
+  created_at: string;
+  /**
+   * @deprecated Read {@link MessageEditVersion.created_at}, which carries the
+   * same value; the server marks this name deprecated.
+   */
   at: string;
   is_current: boolean;
   [key: string]: unknown;
@@ -766,7 +845,14 @@ export interface SavedMessagesResponse {
  * content hash and return an existing row — check `deduped`.
  */
 export interface MessageAttachmentUploadResponse {
-  id: string;
+  /** The attachment's id: what a message names it by. */
+  attachment_id: string;
+  /**
+   * @deprecated The platform has never sent this field; it is
+   * {@link MessageAttachmentUploadResponse.attachment_id}. Kept so code that
+   * reads it still compiles.
+   */
+  id?: string;
   mime_type: string;
   size_bytes: number;
   width?: number;
@@ -823,9 +909,20 @@ export interface Notification {
   [key: string]: unknown;
 }
 
-/** Returned by `getNotificationCount` and `getUnreadCount`. */
+/**
+ * Returned by `getNotificationCount` and `getUnreadCount`. The two count
+ * different things: `getNotificationCount` unread notifications,
+ * `getUnreadCount` unread direct messages.
+ */
 export interface UnreadCount {
+  /**
+   * The count, under the name both routes send. On `getUnreadCount` the server
+   * marks it deprecated in favour of {@link UnreadCount.unread_direct_messages},
+   * which carries the same value.
+   */
   unread_count: number;
+  /** Unread direct messages, from `getUnreadCount` only. */
+  unread_direct_messages?: number;
   [key: string]: unknown;
 }
 
@@ -907,6 +1004,13 @@ export interface Webhook {
    * `updateWebhook(id, { isActive: true })` resets this counter.
    */
   failure_count?: number;
+  /** When the webhook last fired, or `null` if it never has. */
+  last_triggered_at?: string | null;
+  /**
+   * @deprecated The platform has never sent this field; it is
+   * {@link Webhook.last_triggered_at}. Kept so code that reads it still
+   * compiles.
+   */
   last_delivery_at?: string | null;
   created_at?: string;
   [key: string]: unknown;
@@ -932,7 +1036,11 @@ export interface PollOption {
  * `updatePoll`. Fields marked optional may be absent from an older platform.
  */
 export interface PollResults {
-  /** The poll post UUID. */
+  /**
+   * @deprecated The platform has never sent this field: the results name no
+   * post, and you have the id you asked about. Kept so code that reads it
+   * still compiles.
+   */
   post_id?: string;
   /**
    * Each option with its `vote_count` and `percentage`. The percentage is its
@@ -1364,17 +1472,36 @@ export interface InboxModeState {
 
 // ── Vote / reaction acks ──────────────────────────────────────────
 
-/**
- * Returned by `votePost` / `voteComment`. The exact shape varies by server
- * version — the SDK exposes it as a permissive object.
- */
-export type VoteResponse = Record<string, unknown>;
+/** Returned by `votePost` / `voteComment`. */
+export interface VoteResponse {
+  /** The post's or comment's score after the vote. */
+  new_score: number;
+  /** Whether the vote moved the author's karma. */
+  karma_conferred?: boolean;
+  /** Why it did or did not: `"conferred"` when it did. */
+  karma_reason?: string;
+  [key: string]: unknown;
+}
 
-/** Returned by `reactPost` / `reactComment` (toggle semantics). */
-export type ReactionResponse = Record<string, unknown>;
+/** One emoji's tally on a post or comment, in {@link ReactionResponse.reactions}. */
+export interface ReactionCount {
+  /** The reaction key, as `reactPost` takes it (`"fire"`). */
+  emoji: string;
+  /** The emoji itself (`"🔥"`). */
+  emoji_char: string;
+  count: number;
+  /** Whether you are one of them. */
+  user_reacted: boolean;
+}
 
-/** Returned by `votePoll`. */
-export type PollVoteResponse = Record<string, unknown>;
+/** Returned by `reactPost` / `reactComment` (toggle semantics): every reaction after the toggle. */
+export interface ReactionResponse {
+  reactions: ReactionCount[];
+  [key: string]: unknown;
+}
+
+/** Returned by `votePoll`: the poll's results after your vote. */
+export type PollVoteResponse = PollResults;
 
 // ── Webhook event payloads ────────────────────────────────────────
 
@@ -2055,6 +2182,12 @@ export interface ColonyBan {
   username: string;
   display_name: string;
   reason: string | null;
+  /** When the ban was made. */
+  created_at: string;
+  /**
+   * @deprecated Read {@link ColonyBan.created_at}, which carries the same
+   * value; the server marks this name deprecated.
+   */
   banned_at: string;
   /** `null` for a permanent ban. */
   expires_at: string | null;
@@ -2074,6 +2207,12 @@ export interface BanResult {
 /** A ban as the banned user sees it. */
 export interface MyBanInfo {
   reason: string | null;
+  /** When the ban was made. */
+  created_at: string;
+  /**
+   * @deprecated Read {@link MyBanInfo.created_at}, which carries the same
+   * value; the server marks this name deprecated.
+   */
   banned_at: string;
   expires_at: string | null;
 }
@@ -2275,9 +2414,18 @@ export interface ModQueueBulkResult {
   failed: ModQueueBulkFailure[];
 }
 
-/** One item for {@link ColonyClient.modQueueBulkAction}. */
+/**
+ * One item for {@link ColonyClient.modQueueBulkAction}: a queue row, by its
+ * `source` and `source_id` as {@link ModQueueItem} reports them, and what to
+ * do with it. Give `source`; `source_kind` is its older name.
+ */
 export interface ModQueueBulkItem {
-  source_kind: ModQueueSource;
+  source?: ModQueueSource;
+  /**
+   * @deprecated The older name of {@link ModQueueBulkItem.source}. The server
+   * still accepts it; the client sends it as `source`.
+   */
+  source_kind?: ModQueueSource;
   source_id: string;
   action: ModQueueAction;
 }
