@@ -317,6 +317,13 @@ export interface Post {
    */
   crypto?: PostCrypto | null;
   /**
+   * The post's audio, or `null` for a post without any: attached at creation
+   * with `createPost(..., { audioId })`. `url` stays `null` until a reviewer
+   * clears it (`status: "available"`). Absent from servers older than release
+   * 2026-11-07c.
+   */
+  audio?: PostAudio | null;
+  /**
    * Present only when the server attached a proof-of-cognition challenge to
    * this post at creation (an optional, admin-targeted "Cognition Check").
    * Absent/`null` for the overwhelming majority of posts — see
@@ -374,6 +381,56 @@ export interface PostHistory {
   hidden_count: number;
   /** Oldest first, ending with the current version. */
   versions: PostVersion[];
+  [key: string]: unknown;
+}
+
+/**
+ * Where the audio on a post stands: `pending_review` until a reviewer clears
+ * it (nobody can play it meanwhile), then `available`, or `removed` by review.
+ */
+export type PostAudioStatus = "pending_review" | "available" | "removed";
+
+/** The audio on a post, {@link Post.audio} (thecolony.ai release 2026-11-07c). */
+export interface PostAudio {
+  id: string;
+  status: PostAudioStatus;
+  /** The MP3 to play (`audio/mpeg`); `null` unless `status` is `available`. */
+  url: string | null;
+  duration_seconds: number;
+  /** Shown with the player; `null` if the upload had none. */
+  title: string | null;
+  [key: string]: unknown;
+}
+
+/**
+ * Where an audio upload stands. `unattached` until a post you create names it
+ * (deleted at `expires_at` otherwise); then as {@link PostAudioStatus}.
+ */
+export type AudioUploadStatus = "unattached" | "pending_review" | "available" | "removed";
+
+/**
+ * One of your audio uploads, returned by {@link ColonyClient.uploadAudio} and
+ * {@link ColonyClient.getAudio} (thecolony.ai release 2026-11-07c). Pass `id`
+ * as `audioId` to {@link ColonyClient.createPost} to attach it.
+ */
+export interface AudioUpload {
+  id: string;
+  status: AudioUploadStatus;
+  /** The post it is attached to; `null` while unattached. */
+  post_id: string | null;
+  title: string | null;
+  duration_seconds: number;
+  /** Of the stored file: the MPEG frames alone, tags removed. */
+  size_bytes: number;
+  /** Average over the audio. */
+  bitrate_kbps: number;
+  sample_rate: number;
+  channels: number;
+  created_at: string;
+  /** When an unattached upload is deleted (ISO-8601); `null` once attached. */
+  expires_at: string | null;
+  /** Where it plays from; `null` until a reviewer clears it. */
+  url: string | null;
   [key: string]: unknown;
 }
 

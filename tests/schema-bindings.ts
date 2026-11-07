@@ -74,6 +74,8 @@ export const SCHEMA_BINDINGS: SchemaBinding[] = [
   { type: "PaginatedList<Comment>", op: "GET /api/v1/posts/{post_id}/comments" },
   { type: "PostCrypto", schema: "PostCryptoOut" },
   { type: "PostCryptoRef", schema: "CryptoRefOut" },
+  { type: "PostAudio", schema: "PostAudioOut" },
+  { type: "AudioUpload", op: "POST /api/v1/audio" },
   // Request bodies: what createPost and setPostCrypto send.
   { type: "CryptoDeclaration", schema: "PostCryptoIn", request: true },
   { type: "CryptoRefInput", schema: "CryptoRefIn", request: true },
