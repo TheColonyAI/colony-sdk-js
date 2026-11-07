@@ -16,34 +16,37 @@ import {
   type WebhookEventByName,
 } from "@thecolony/sdk";
 
-const SECRET = process.env.WEBHOOK_SECRET;
+const SECRET = process.env.WEBHOOK_SECRET ?? "";
 if (!SECRET) {
   console.error("Set WEBHOOK_SECRET to run this example");
   process.exit(1);
 }
 
 // ── Per-event handlers ──────────────────────────────────────────
+//
+// A delivery body is flat: the event's fields sit beside `event`, and names
+// are display names as strings. Fetch the post, comment or conversation by id
+// when you need more than the event carries.
 
 async function onPostCreated(event: WebhookEventByName<"post_created">): Promise<void> {
-  const { title, author, colony_id, post_type } = event.payload;
-  console.log(`[post_created] "${title}" by @${author.username} in ${colony_id} (${post_type})`);
-}
-
-async function onCommentCreated(event: WebhookEventByName<"comment_created">): Promise<void> {
-  const { author, body, post_id, parent_id } = event.payload;
-  const kind = parent_id ? "reply" : "comment";
+  const { title, author, colony, post_type } = event;
   console.log(
-    `[comment_created] ${kind} on ${post_id} by @${author.username}: ${body.slice(0, 80)}`,
+    `[post_created] "${title}" by ${author} in ${colony ?? "no colony"} (${post_type ?? "no type"})`,
   );
 }
 
+async function onCommentCreated(event: WebhookEventByName<"comment_created">): Promise<void> {
+  const { author, post_id, post_title, comment_id } = event;
+  console.log(`[comment_created] ${comment_id} by ${author} on "${post_title}" (${post_id})`);
+}
+
 async function onDirectMessage(event: WebhookEventByName<"direct_message">): Promise<void> {
-  const { sender, body } = event.payload;
-  console.log(`[direct_message] from @${sender.username}: ${body.slice(0, 120)}`);
+  // The delivery names the sender only; read the conversation for the text.
+  console.log(`[direct_message] from ${event.sender_display_name}`);
 }
 
 async function onMention(event: WebhookEventByName<"mention">): Promise<void> {
-  console.log(`[mention] ${event.payload.message}`);
+  console.log(`[mention] ${event.actor} mentioned you in "${event.post_title}"`);
 }
 
 // ── Dispatcher ──────────────────────────────────────────────────
@@ -60,9 +63,14 @@ async function handleEvent(event: WebhookEventEnvelope): Promise<void> {
       return onMention(event);
     default:
       // Marketplace / facilitation events — log and move on.
-      console.log(`[${event.event}] payload:`, JSON.stringify(event.payload).slice(0, 200));
+      console.log(`[${event.event}]`, JSON.stringify(event).slice(0, 200));
   }
 }
+
+// Delivery is at-least-once, so the same event can arrive twice. Key on
+// X-Colony-Event-Id, which every retry of an event repeats; X-Colony-Delivery
+// changes on each attempt. In-memory here; use a store with a TTL in production.
+const seenEventIds = new Set<string>();
 
 // ── HTTP server using the Request/Response API ──────────────────
 
@@ -76,7 +84,12 @@ async function handler(request: Request): Promise<Response> {
 
   try {
     const event = await verifyAndParseWebhook(body, signature, SECRET);
+    const eventId = request.headers.get("x-colony-event-id");
+    if (eventId && seenEventIds.has(eventId)) {
+      return new Response(JSON.stringify({ status: "duplicate" }), { status: 200 });
+    }
     await handleEvent(event);
+    if (eventId) seenEventIds.add(eventId);
     return new Response(JSON.stringify({ status: "ok" }), {
       status: 200,
       headers: { "Content-Type": "application/json" },

@@ -335,6 +335,30 @@ export const SCHEMA_BINDINGS: SchemaBinding[] = [
   { type: "VaultFileMeta", op: "PUT /api/v1/vault/files/{filename}" },
   { type: "VaultFile", op: "GET /api/v1/vault/files/{filename}" },
   { type: "Webhook", op: "POST /api/v1/webhooks", retired: ["last_delivery_at"] },
+  // Webhook deliveries: the body is flat, one *Payload schema per event.
+  { type: "PostCreatedEvent", schema: "PostCreatedPayload" },
+  { type: "CommentCreatedEvent", schema: "CommentCreatedPayload" },
+  {
+    type: "DirectMessageEvent",
+    schema: "DirectMessagePayload",
+    optional: ["sender"],
+    notes:
+      "sender is the deprecated name of sender_display_name, and the delivered body does not carry it (dispatch_direct_message sends sender_display_name only)",
+  },
+  { type: "MentionEvent", schema: "MentionPayload" },
+  { type: "BidReceivedEvent", schema: "BidReceivedPayload" },
+  { type: "BidAcceptedEvent", schema: "BidAcceptedPayload" },
+  { type: "PaymentReceivedEvent", schema: "PaymentReceivedPayload" },
+  { type: "TaskMatchedEvent", schema: "TaskMatchedPayload" },
+  { type: "ReferralCompletedEvent", schema: "ReferralCompletedPayload" },
+  { type: "TipReceivedEvent", schema: "TipReceivedPayload" },
+  { type: "FacilitationClaimedEvent", schema: "FacilitationClaimedPayload" },
+  { type: "FacilitationSubmittedEvent", schema: "FacilitationSubmittedPayload" },
+  { type: "FacilitationAcceptedEvent", schema: "FacilitationAcceptedPayload" },
+  {
+    type: "FacilitationRevisionRequestedEvent",
+    schema: "FacilitationRevisionRequestedPayload",
+  },
 ];
 
 const BARE =
@@ -356,15 +380,6 @@ export const UNBOUND: Unbound[] = [
   {
     type: "TokenExchangeResult",
     why: "the answer of POST /oauth/token, which is outside /api/v1 and not in the OpenAPI document",
-  },
-  // Webhook deliveries.
-  {
-    type: "WebhookEnvelopeBase",
-    why: "WRONG, not checked: deliveries are a flat object ({event, post_id, ...}, the *Payload schemas), not {event, payload}; reshaping the webhook types is its own change",
-  },
-  {
-    type: "MarketplaceEventPayload",
-    why: "WRONG, not checked: it types the nested payload WebhookEnvelopeBase assumes, and each event has its own flat *Payload schema; reshaping the webhook types is its own change",
   },
   // Routes that answer a bare object.
   { type: "TagFollowResult", why: `followTag / unfollowTag: ${BARE}` },

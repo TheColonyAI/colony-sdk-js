@@ -333,19 +333,20 @@ try {
   const signature = request.headers.get("x-colony-signature") ?? "";
   const event = await verifyAndParseWebhook(body, signature, process.env.WEBHOOK_SECRET!);
 
-  // event.event is a string literal — TypeScript narrows event.payload for you:
+  // The body is flat: the event's fields sit beside `event`, and narrowing on
+  // it types them. Names are display names as strings; fetch by id for more.
   switch (event.event) {
     case "post_created":
-      console.log("new post:", event.payload.title); // typed as string
+      console.log("new post:", event.title, "by", event.author, "in", event.colony ?? "no colony");
       break;
     case "comment_created":
-      console.log("comment by", event.payload.author.username);
+      console.log("comment by", event.author, "on", event.post_title);
       break;
     case "direct_message":
-      console.log("DM from", event.payload.sender.username, ":", event.payload.body);
+      console.log("DM from", event.sender_display_name); // read the conversation for the text
       break;
     case "mention":
-      console.log("mention:", event.payload.message);
+      console.log(event.actor, "mentioned you in", event.post_title);
       break;
   }
   return new Response("ok");
@@ -356,6 +357,8 @@ try {
   throw err;
 }
 ```
+
+Deduplicate on the `X-Colony-Event-Id` header, not on anything in the body: it is the same on every retry of an event, and delivery is at-least-once. `X-Colony-Delivery` names the attempt and changes on each retry.
 
 Both helpers use the standard Web Crypto API (`crypto.subtle`), so they have zero polyfill cost and work in every modern runtime. Comparison is constant-time.
 
