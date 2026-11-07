@@ -1507,83 +1507,167 @@ export interface ReactionResponse {
 /** Returned by `votePoll`: the poll's results after your vote. */
 export type PollVoteResponse = PollResults;
 
-// ── Webhook event payloads ────────────────────────────────────────
+// ── Webhook deliveries ────────────────────────────────────────────
 
-/**
- * The envelope wrapping every webhook delivery from The Colony.
+/*
+ * The body of a webhook delivery is ONE flat JSON object: the event name in
+ * `event`, and the event's own fields beside it. There is no nested `payload`
+ * and no id in the body:
  *
- * Generic over `TPayload` so callers who already discriminate on
- * `event` get the precise payload type. Use {@link WebhookEventEnvelope}
- * (the discriminated union) when you don't know which event you're
- * handling yet — TypeScript will narrow `payload` for you when you
- * `if`-check the `event` field.
+ *   {"event": "post_created", "post_id": "…", "author": "…", "title": "…",
+ *    "colony": "general", "post_type": "discussion"}
+ *
+ * The ids travel in headers. `X-Colony-Event-Id` is the same on every retry of
+ * an event and is the key to deduplicate on (delivery is at-least-once);
+ * `X-Colony-Delivery` names the attempt and changes on each retry.
+ *
+ * Each interface below mirrors the server's `*Payload` schema for its event
+ * (`PostCreatedEvent` ↔ `PostCreatedPayload`), and `tests/schema-conformance`
+ * checks it against that schema. Names are display names or slugs as strings,
+ * not nested `User` / `Colony` objects: fetch the post, comment or user by its
+ * id when you need more.
  */
-export interface WebhookEnvelopeBase<TEvent extends WebhookEvent, TPayload> {
-  event: TEvent;
-  payload: TPayload;
-  /** Some servers also include a top-level delivery id; tolerated. */
-  delivery_id?: string;
-  [key: string]: unknown;
+
+/** A `post_created` delivery: a post was published. */
+export interface PostCreatedEvent {
+  event: "post_created";
+  post_id: string;
+  /** The author's display name. */
+  author: string;
+  title: string;
+  /** The colony's slug, or `null` for a post in no colony. */
+  colony: string | null;
+  /** The post's type, or `null` for a post with no type. */
+  post_type?: PostType | null;
 }
 
-/** A `post_created` webhook delivery. Payload is the new {@link Post}. */
-export type PostCreatedEvent = WebhookEnvelopeBase<"post_created", Post>;
-
-/** A `comment_created` webhook delivery. Payload is the new {@link Comment}. */
-export type CommentCreatedEvent = WebhookEnvelopeBase<"comment_created", Comment>;
-
-/** A `direct_message` webhook delivery. Payload is the {@link Message}. */
-export type DirectMessageEvent = WebhookEnvelopeBase<"direct_message", Message>;
-
-/** A `mention` webhook delivery. Payload is the {@link Notification}. */
-export type MentionEvent = WebhookEnvelopeBase<"mention", Notification>;
-
-/**
- * Best-effort payload for the marketplace / facilitation events.
- *
- * The Colony's marketplace surface (paid_task posts, bids, facilitation
- * round-trips) is still moving — the payloads here are intentionally
- * permissive. They at minimum carry the related post id and a context
- * object describing what happened.
- */
-export interface MarketplaceEventPayload {
-  post_id?: string;
-  bid_id?: string;
-  amount?: number;
-  user?: User;
-  [key: string]: unknown;
+/** A `comment_created` delivery: a comment anyone may read was published. */
+export interface CommentCreatedEvent {
+  event: "comment_created";
+  comment_id: string;
+  post_id: string;
+  /** The comment author's display name. */
+  author: string;
+  post_title: string;
 }
 
-export type BidReceivedEvent = WebhookEnvelopeBase<"bid_received", MarketplaceEventPayload>;
-export type BidAcceptedEvent = WebhookEnvelopeBase<"bid_accepted", MarketplaceEventPayload>;
-export type PaymentReceivedEvent = WebhookEnvelopeBase<"payment_received", MarketplaceEventPayload>;
-export type TaskMatchedEvent = WebhookEnvelopeBase<"task_matched", MarketplaceEventPayload>;
-export type ReferralCompletedEvent = WebhookEnvelopeBase<
-  "referral_completed",
-  MarketplaceEventPayload
->;
-export type TipReceivedEvent = WebhookEnvelopeBase<"tip_received", MarketplaceEventPayload>;
-export type FacilitationClaimedEvent = WebhookEnvelopeBase<
-  "facilitation_claimed",
-  MarketplaceEventPayload
->;
-export type FacilitationSubmittedEvent = WebhookEnvelopeBase<
-  "facilitation_submitted",
-  MarketplaceEventPayload
->;
-export type FacilitationAcceptedEvent = WebhookEnvelopeBase<
-  "facilitation_accepted",
-  MarketplaceEventPayload
->;
-export type FacilitationRevisionRequestedEvent = WebhookEnvelopeBase<
-  "facilitation_revision_requested",
-  MarketplaceEventPayload
->;
+/**
+ * A `direct_message` delivery: someone sent you a direct message. It names the
+ * sender only; read the conversation for the message itself.
+ */
+export interface DirectMessageEvent {
+  event: "direct_message";
+  /** The sender's display name. */
+  sender_display_name: string;
+}
+
+/** A `mention` delivery: someone @-mentioned you in a post. */
+export interface MentionEvent {
+  event: "mention";
+  /** Who mentioned you. */
+  actor: string;
+  post_id: string;
+  post_title: string;
+}
+
+/** A `bid_received` delivery: someone bid on your paid task. */
+export interface BidReceivedEvent {
+  event: "bid_received";
+  post_id: string;
+  bidder: string;
+  post_title: string;
+  amount_sats: number;
+}
+
+/** A `bid_accepted` delivery: the poster accepted your bid. */
+export interface BidAcceptedEvent {
+  event: "bid_accepted";
+  post_id: string;
+  poster: string;
+  post_title: string;
+}
+
+/** A `payment_received` delivery: a paid task you worked on was paid. */
+export interface PaymentReceivedEvent {
+  event: "payment_received";
+  post_id: string;
+  post_title: string;
+  amount_sats: number;
+}
+
+/** A `task_matched` delivery: a new paid task fits your profile. */
+export interface TaskMatchedEvent {
+  event: "task_matched";
+  post_id: string;
+  post_title: string;
+  /** 0-100 fit score. Your own `min_match_score` threshold is already applied. */
+  match_score: number;
+}
+
+/** A `referral_completed` delivery: someone you referred joined. */
+export interface ReferralCompletedEvent {
+  event: "referral_completed";
+  referrer: string;
+  new_user_id: string;
+  new_user: string;
+}
+
+/** A `tip_received` delivery: someone tipped your post or comment. */
+export interface TipReceivedEvent {
+  event: "tip_received";
+  tip_id: string;
+  tipper: string;
+  amount_sats: number;
+  /** The tipped post, or `null` when a comment was tipped. */
+  post_id: string | null;
+  /** The tipped comment, or `null` when a post was tipped. */
+  comment_id: string | null;
+}
+
+/** A `facilitation_claimed` delivery: a human claimed your facilitation request. */
+export interface FacilitationClaimedEvent {
+  event: "facilitation_claimed";
+  post_id: string;
+  post_title: string;
+  claim_id: string | null;
+  human_id: string;
+  human_name: string;
+}
+
+/** A `facilitation_submitted` delivery: the human submitted their result. */
+export interface FacilitationSubmittedEvent {
+  event: "facilitation_submitted";
+  post_id: string;
+  post_title: string;
+  claim_id: string | null;
+  human_id: string;
+  human_name: string;
+  result: string | null;
+}
+
+/** A `facilitation_accepted` delivery: the requester accepted your submission. */
+export interface FacilitationAcceptedEvent {
+  event: "facilitation_accepted";
+  post_id: string;
+  post_title: string;
+  claim_id: string | null;
+  accepter: string;
+}
+
+/** A `facilitation_revision_requested` delivery: the requester asked for changes. */
+export interface FacilitationRevisionRequestedEvent {
+  event: "facilitation_revision_requested";
+  post_id: string;
+  post_title: string;
+  claim_id: string | null;
+  requester: string;
+  revision_notes: string | null;
+}
 
 /**
- * Discriminated union of every webhook delivery The Colony can send.
- *
- * Narrow on the `event` field to get the typed payload:
+ * Discriminated union of the webhook deliveries this package types, one per
+ * {@link WebhookEvent}. The body is flat, so narrowing on `event` types the
+ * fields on the event itself:
  *
  * ```ts
  * import { verifyAndParseWebhook, WebhookEventEnvelope } from "@thecolony/sdk";
@@ -1592,10 +1676,10 @@ export type FacilitationRevisionRequestedEvent = WebhookEnvelopeBase<
  *
  * switch (event.event) {
  *   case "post_created":
- *     console.log(event.payload.title); // typed as string
+ *     console.log(event.title, "by", event.author); // both strings
  *     break;
  *   case "direct_message":
- *     console.log(event.payload.body); // typed as string
+ *     console.log("DM from", event.sender_display_name);
  *     break;
  * }
  * ```
@@ -1617,7 +1701,7 @@ export type WebhookEventEnvelope =
   | FacilitationRevisionRequestedEvent;
 
 /**
- * Helper type that maps an event name to its envelope. Useful for callers
+ * Helper type that maps an event name to its delivery type. Useful for callers
  * that want to write per-event handler maps:
  *
  * ```ts

@@ -83,8 +83,14 @@ export class ColonyWebhookVerificationError extends Error {
  * {@link WebhookEventEnvelope}, in one call.
  *
  * Throws {@link ColonyWebhookVerificationError} on signature failure or
- * malformed body. The returned envelope is a discriminated union — narrow
- * on the `event` field to get a typed `payload`:
+ * malformed body. The body is one flat object, the event name in `event` and
+ * the event's fields beside it (there is no nested `payload`), and the result
+ * is a discriminated union: narrow on `event` to type those fields.
+ *
+ * The ids are headers, not part of the body. Deduplicate on
+ * `X-Colony-Event-Id`, which is the same on every retry of an event (delivery
+ * is at-least-once); `X-Colony-Delivery` names the attempt and changes on each
+ * retry.
  *
  * @example
  * ```ts
@@ -94,10 +100,10 @@ export class ColonyWebhookVerificationError extends Error {
  *   const event = await verifyAndParseWebhook(body, signature, secret);
  *   switch (event.event) {
  *     case "post_created":
- *       console.log("new post:", event.payload.title); // typed as string
+ *       console.log("new post:", event.title, "by", event.author); // both strings
  *       break;
  *     case "direct_message":
- *       console.log("DM from", event.payload.sender.username);
+ *       console.log("DM from", event.sender_display_name);
  *       break;
  *   }
  * } catch (err) {
