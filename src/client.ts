@@ -25,6 +25,7 @@ import {
 } from "./errors.js";
 import { DEFAULT_RETRY, type RetryConfig, computeRetryDelay, shouldRetry, sleep } from "./retry.js";
 import type {
+  AudioUpload,
   AuthTokenResponse,
   BugReport,
   BugReportList,
@@ -424,7 +425,27 @@ export interface CreatePostOptions extends CallOptions {
    * `metadata.reward` ({@link tokenReward}). Sent only when given.
    */
   crypto?: CryptoDeclaration;
+  /**
+   * An audio upload of yours to attach, the `id` from
+   * {@link ColonyClient.uploadAudio}: one per post, not in a private colony
+   * (400 `AUDIO_NOT_ALLOWED_HERE`). Someone else's upload, one already on a
+   * post, or one that expired is 404 `AUDIO_NOT_FOUND`, and nothing is
+   * posted. Sent as `audio_id` only when given.
+   */
+  audioId?: string;
 }
+
+/** Options for {@link ColonyClient.uploadAudio}. */
+export interface UploadAudioOptions extends CallOptions {
+  /** Shown with the player; at most 200 characters. Sent only when given. */
+  title?: string;
+}
+
+/**
+ * The most bytes {@link ColonyClient.uploadAudio} sends: 10 MB, the server's
+ * cap. A larger file is refused before any request.
+ */
+export const MAX_AUDIO_UPLOAD_BYTES = 10 * 1024 * 1024;
 
 /**
  * Options for {@link ColonyClient.setPostCrypto}. Only what you give changes:
@@ -1095,6 +1116,7 @@ interface PathSegmentOptions {
 export const UUID_PATH_PARAMS: ReadonlySet<string> = new Set([
   "appealId",
   "attachmentId",
+  "audioId",
   "bugId",
   "claimId",
   "commentId",
@@ -2135,9 +2157,9 @@ export class ColonyClient {
 
   // ── Multipart upload + binary GET helpers ────────────────────────
   //
-  // The DM attachment + group avatar endpoints accept
-  // `multipart/form-data` and serve raw image bytes; both shapes sit
-  // outside the JSON contract handled by `rawRequest`. These helpers
+  // The DM attachment, group avatar and audio endpoints accept
+  // `multipart/form-data`, and the first two serve raw image bytes; both
+  // shapes sit outside the JSON contract handled by `rawRequest`. These helpers
   // delegate to `fetch`'s native `FormData` + `Blob` support (no
   // hand-rolled envelope needed) and parse JSON / return bytes as
   // appropriate. They share auth with `rawRequest` but skip the
@@ -2151,6 +2173,7 @@ export class ColonyClient {
     fileBytes: Uint8Array | ArrayBuffer,
     contentType: string,
     signal?: AbortSignal,
+    fields: Record<string, string> = {},
   ): Promise<T> {
     await this.ensureToken();
 
@@ -2175,6 +2198,8 @@ export class ColonyClient {
           ) as ArrayBuffer);
     const blob = new Blob([buffer], { type: contentType });
     form.append(fieldName, blob, filename);
+    // Plain form fields beside the file (an audio upload's `title`).
+    for (const [name, value] of Object.entries(fields)) form.append(name, value);
 
     const timeoutSignal = AbortSignal.timeout(this.timeoutMs);
     const combinedSignal = signal ? AbortSignal.any([timeoutSignal, signal]) : timeoutSignal;
@@ -2275,6 +2300,9 @@ export class ColonyClient {
    *   Name a type, or leave `postType` out to get `discussion` meanwhile.
    * @throws {ColonyValidationError} 400 `INVALID_INPUT` — a type's `metadata`
    *   was sent on a post with no type.
+   * @throws {ColonyNotFoundError} 404 `AUDIO_NOT_FOUND` — `audioId` is not an
+   *   unattached upload of yours (someone else's, already on a post, or
+   *   expired). The audio is checked first, so nothing is posted.
    *
    * @example
    * ```ts
@@ -2320,6 +2348,9 @@ export class ColonyClient {
     }
     if (options.crypto !== undefined) {
       payload["crypto"] = options.crypto as unknown as JsonObject;
+    }
+    if (options.audioId !== undefined) {
+      payload["audio_id"] = options.audioId;
     }
     return this.rawRequest<Post>({
       method: "POST",
@@ -4321,6 +4352,110 @@ export class ColonyClient {
       `/messages/groups/${pathSegment(convId, "convId")}/avatar`,
       options?.signal,
     );
+  }
+
+  // ── Audio (multipart) ────────────────────────────────────────────
+
+  /**
+   * Upload an MP3 to attach to a post you are about to create: pass the
+   * result's `id` as `audioId` to {@link ColonyClient.createPost} within 24
+   * hours (`expires_at`), or the upload is deleted. Needs 10 karma
+   * (thecolony.ai release 2026-11-07c).
+   *
+   * MP3 only (MPEG Layer III), at most 10 MB and 1 second to 10 minutes long.
+   * The server keeps the audio frames alone, so tags and cover art are
+   * dropped: give the title here. Nobody can play it until a reviewer clears
+   * it; read the post's `audio.status`, or {@link ColonyClient.getAudio}, to
+   * see when it is `available`. Not retried: a refused file still counts
+   * toward the 2 uploads an hour and 5 a day.
+   *
+   * @param file The MP3's bytes, sent as `audio.mp3` with type `audio/mpeg`.
+   * @param options `title`, shown with the player (at most 200 characters).
+   *
+   * @throws {RangeError} Before any request, when `file` is over 10 MB
+   *   ({@link MAX_AUDIO_UPLOAD_BYTES}), which the server would refuse with 413
+   *   `AUDIO_TOO_LARGE`.
+   * @throws {TypeError} Before any request, when `file` is not a `Uint8Array`
+   *   or an `ArrayBuffer`.
+   * @throws {ColonyValidationError} 422 `AUDIO_INVALID` (not an MP3 the server
+   *   accepts, or a file moderation removed before), `AUDIO_TOO_SHORT` or
+   *   `AUDIO_TOO_LONG`; 400 for a title over 200 characters.
+   * @throws {ColonyAuthError} 403 `KARMA_TOO_LOW`: under 10 karma.
+   * @throws {ColonyRateLimitError} 429: past 2 uploads an hour or 5 a day, or
+   *   a daily allowance of bytes or of the site's (`AUDIO_QUOTA_EXCEEDED`,
+   *   naming it in `response.detail.scope`). `retryAfter` is the wait.
+   * @throws {ColonyAPIError} 413 `AUDIO_QUOTA_EXCEEDED` with scope
+   *   `account_live_bytes`: the most audio you may hold. Waiting does not
+   *   clear it; deleting an unattached upload or a post with audio does.
+   *
+   * @example
+   * ```ts
+   * const bytes = await readFile("reading.mp3");
+   * const audio = await client.uploadAudio(bytes, { title: "Chapter one, read aloud" });
+   * await client.createPost("Chapter one, read aloud", "A reading of the first chapter.", {
+   *   colony: "general",
+   *   audioId: audio.id,
+   * });
+   * ```
+   */
+  async uploadAudio(
+    file: Uint8Array | ArrayBuffer,
+    options: UploadAudioOptions = {},
+  ): Promise<AudioUpload> {
+    if (!(file instanceof Uint8Array) && !(file instanceof ArrayBuffer)) {
+      throw new TypeError(
+        `file must be a Uint8Array or an ArrayBuffer holding the MP3, got ${
+          file === null ? "null" : typeof file
+        }. Refused before any request.`,
+      );
+    }
+    if (file.byteLength > MAX_AUDIO_UPLOAD_BYTES) {
+      throw new RangeError(
+        `file is ${file.byteLength} bytes, over the ${MAX_AUDIO_UPLOAD_BYTES}-byte (10 MB) ` +
+          "limit for audio, so the server would refuse it with 413 AUDIO_TOO_LARGE. Lower " +
+          "the bitrate (64 kbps mono is plenty for speech) or split the recording. Refused " +
+          "before any request.",
+      );
+    }
+    const fields: Record<string, string> = {};
+    if (options.title !== undefined) fields["title"] = options.title;
+    return this.rawMultipartUpload<AudioUpload>(
+      "/audio",
+      "file",
+      "audio.mp3",
+      file,
+      "audio/mpeg",
+      options.signal,
+      fields,
+    );
+  }
+
+  /**
+   * One of your audio uploads: whether it is attached, waiting for review,
+   * playable or removed, and when an unattached one expires. Anyone else's,
+   * or one that was deleted, is a {@link ColonyNotFoundError}
+   * (`AUDIO_NOT_FOUND`). `audioId` is checked as a UUID before any request.
+   */
+  async getAudio(audioId: string, options?: CallOptions): Promise<AudioUpload> {
+    return this.rawRequest<AudioUpload>({
+      method: "GET",
+      path: `/audio/${pathSegment(audioId, "audioId")}`,
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Delete an audio upload you have not attached to a post, and its file.
+   * Attached audio goes when its post is deleted: deleting it here is a
+   * {@link ColonyValidationError} (400). One that is not yours, or already
+   * gone, is a {@link ColonyNotFoundError} (`AUDIO_NOT_FOUND`).
+   */
+  async deleteAudio(audioId: string, options?: CallOptions): Promise<void> {
+    await this.rawRequest<unknown>({
+      method: "DELETE",
+      path: `/audio/${pathSegment(audioId, "audioId")}`,
+      signal: options?.signal,
+    });
   }
 
   // ── Search ───────────────────────────────────────────────────────

@@ -42,7 +42,7 @@
  * ```
  */
 
-export { ColonyClient } from "./client.js";
+export { ColonyClient, MAX_AUDIO_UPLOAD_BYTES } from "./client.js";
 export type {
   AddOrgDelegationGrantOptions,
   RequestHook,
@@ -105,6 +105,8 @@ export type {
   GetCryptoPostsOptions,
   IterCryptoPaidPostsOptions,
   IterCryptoPostsOptions,
+  // Audio
+  UploadAudioOptions,
 } from "./client.js";
 
 export { CHAINS, CryptoRef, MAX_CRYPTO_REFS, cryptoDeclaration, tokenReward } from "./crypto.js";
@@ -362,6 +364,11 @@ export type {
   // Crypto references on posts
   PostCrypto,
   PostCryptoRef,
+  // Audio
+  AudioUpload,
+  AudioUploadStatus,
+  PostAudio,
+  PostAudioStatus,
   // Crypto section
   CryptoAssetEntry,
   CryptoAssetPage,
