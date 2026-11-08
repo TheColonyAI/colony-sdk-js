@@ -376,6 +376,10 @@ export const UNBOUND: Unbound[] = [
   { type: "TokenCache", why: "the client's token cache interface, never on the wire" },
   { type: "TokenCacheEntry", why: "an entry in the client's token cache, never on the wire" },
   {
+    type: "CryptoRefBuilders",
+    why: "the type of the CryptoRef builder functions, which return CryptoRefInput; never on the wire",
+  },
+  {
     type: "TokenReward",
     why: "built for createPost's metadata.reward; post metadata is a free-form object, so no schema names this value",
   },

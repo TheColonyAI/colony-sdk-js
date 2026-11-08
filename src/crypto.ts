@@ -138,6 +138,16 @@ function normalisedSymbol(symbol: string): string {
   return sym;
 }
 
+/** The builders {@link CryptoRef} holds. */
+export interface CryptoRefBuilders {
+  /** A token contract (EVM) or a mint (Solana). `symbol` is display text. */
+  asset(chain: string, address: string, symbol?: string): CryptoRefInput;
+  /** An account or contract. `label` is your name for it (`"treasury"`). */
+  address(chain: string, address: string, label?: string): CryptoRefInput;
+  /** A transaction, by its id (an EVM hash, a Solana signature, a Bitcoin txid). */
+  tx(chain: string, id: string): CryptoRefInput;
+}
+
 /**
  * Builders for the references a post names, as the API takes them. Each
  * throws a `RangeError` for a shape the chain cannot have. The chain is a slug
@@ -149,7 +159,7 @@ function normalisedSymbol(symbol: string): string {
  *   CryptoRef.address("bsc", "0x7C34E9e21eE28A49Ff0b84B61774119E6633359f", "treasury"),
  * ];
  */
-export const CryptoRef = {
+export const CryptoRef: CryptoRefBuilders = {
   /** A token contract (EVM) or a mint (Solana). `symbol` is display text. */
   asset(chain: string, address: string, symbol?: string): CryptoRefInput {
     const slug = chainSlug(chain);
