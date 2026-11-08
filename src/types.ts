@@ -319,9 +319,10 @@ export interface Post {
   crypto?: PostCrypto | null;
   /**
    * The post's audio, or `null` for a post without any: attached at creation
-   * with `createPost(..., { audioId })`. `url` stays `null` until a reviewer
-   * clears it (`status: "available"`). Absent from servers older than release
-   * 2026-11-07c.
+   * with `createPost(..., { audioId })`, or within the 15-minute edit window
+   * with `setPostAudio` (`removePostAudio` takes it off). `url` stays `null`
+   * until a reviewer clears it (`status: "available"`). Absent from servers
+   * older than release 2026-11-07c.
    */
   audio?: PostAudio | null;
   /**
@@ -1949,11 +1950,17 @@ export interface ColonyClientOptions {
   totp?: TotpProvider;
   /**
    * Where the client reports a problem the API flagged without failing the
-   * request; `console.warn` by default. Today that is a query parameter the
-   * route ignored (the `X-Colony-Ignored-Params` header): a filter that did
-   * nothing, so the answer holds more than was asked for, or a page
-   * parameter that did nothing, so it is the first page again. Reported once
-   * per route and name. Pass `() => {}` to silence it.
+   * request; `console.warn` by default. Today that is a name the route
+   * ignored, so it changed nothing:
+   *
+   * - a query parameter (the `X-Colony-Ignored-Params` header): a filter that
+   *   did nothing, so the answer holds more than was asked for, or a page
+   *   parameter that did nothing, so it is the first page again;
+   * - a top-level JSON body field (the `X-Colony-Ignored-Fields` header,
+   *   thecolony.ai release 2026-11-08a): a write that answered success
+   *   without the field you sent, such as a misspelt or guessed name.
+   *
+   * Each is reported once per route and name. Pass `() => {}` to silence it.
    */
   onWarning?: (message: string) => void;
   /**
