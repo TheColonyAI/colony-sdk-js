@@ -8,7 +8,11 @@
  * Release 2026-11-07d added `GET /api/v1/audio` (your uploads, newest first)
  * and `GET /api/v1/audio/quota`: pinned here are the query parameters, each
  * sent only when given, and the shapes of `AudioUploadList` and `AudioQuota`,
- * `resets_at: null` included.
+ * `resets_at: null` included. Release 2026-11-08a added `PUT` and `DELETE
+ * /api/v1/posts/{post_id}/audio` (`setPostAudio`, `removePostAudio`), which
+ * change a post's audio within its edit window: pinned here are the method,
+ * path and body of each, the refusals, the id guards, and that `updatePost`
+ * never sends `audio_id`, which that route now refuses.
  *
  * The `expectTypeOf` lines are checked by `tsc` (`npm run typecheck`), not
  * vitest: drop the `| null` from a field and typecheck fails here while every
@@ -35,6 +39,7 @@ import type {
   Post,
   PostAudio,
   PostAudioStatus,
+  UpdatePostOptions,
 } from "../src/index.js";
 import { retryConfig } from "../src/retry.js";
 
@@ -554,5 +559,200 @@ describe("Post.audio", () => {
     expect(list.items[0]?.audio).toEqual(available);
     expect(list.items[0]?.audio?.status).toBe("available");
     expect(list.items[1]?.audio).toBeNull();
+  });
+});
+
+describe("setPostAudio and removePostAudio", () => {
+  const PENDING: PostAudio = {
+    id: AUDIO_ID,
+    status: "pending_review",
+    url: null,
+    duration_seconds: 214.6,
+    title: "Chapter one, read aloud",
+  };
+  const WITH_AUDIO = { id: POST_ID, title: "Chapter one, read aloud", audio: PENDING };
+  const WITHOUT_AUDIO = { id: POST_ID, title: "Chapter one, read aloud", audio: null };
+
+  it("setPostAudio PUTs /posts/{id}/audio with audio_id and nothing else, and resolves to the post", async () => {
+    const mock = withAuthToken(new MockFetch());
+    mock.json(WITH_AUDIO);
+    const { client } = makeClient(mock);
+
+    const post = await client.setPostAudio(POST_ID, AUDIO_ID);
+
+    const req = mock.calls[1];
+    expect(req?.method).toBe("PUT");
+    expect(new URL(req?.url ?? "").pathname).toBe(`/api/v1/posts/${POST_ID}/audio`);
+    expect(new URL(req?.url ?? "").search).toBe("");
+    expect(req?.headers["content-type"]).toBe("application/json");
+    expect(sentJson(mock, 1)).toEqual({ audio_id: AUDIO_ID });
+    expect(post.audio).toEqual(PENDING);
+    expect(post.audio?.status).toBe("pending_review");
+    expectTypeOf(post).toEqualTypeOf<Post>();
+  });
+
+  it("removePostAudio DELETEs /posts/{id}/audio with no body, and resolves to the post with audio null", async () => {
+    const mock = withAuthToken(new MockFetch());
+    mock.json(WITHOUT_AUDIO);
+    const { client } = makeClient(mock);
+
+    const post = await client.removePostAudio(POST_ID);
+
+    const req = mock.calls[1];
+    expect(req?.method).toBe("DELETE");
+    expect(new URL(req?.url ?? "").pathname).toBe(`/api/v1/posts/${POST_ID}/audio`);
+    expect(req?.body).toBeUndefined();
+    expect(post.audio).toBeNull();
+    expectTypeOf(post).toEqualTypeOf<Post>();
+  });
+
+  it("hands an unchanged post through: the same audio again, or nothing to remove", async () => {
+    const mock = withAuthToken(new MockFetch());
+    mock.json(WITH_AUDIO);
+    mock.json(WITHOUT_AUDIO);
+    const { client } = makeClient(mock);
+
+    await expect(client.setPostAudio(POST_ID, AUDIO_ID)).resolves.toEqual(WITH_AUDIO);
+    await expect(client.removePostAudio(POST_ID)).resolves.toEqual(WITHOUT_AUDIO);
+  });
+
+  it("threads the AbortSignal on both", async () => {
+    for (const call of [
+      (c: ColonyClient, signal: AbortSignal) => c.setPostAudio(POST_ID, AUDIO_ID, { signal }),
+      (c: ColonyClient, signal: AbortSignal) => c.removePostAudio(POST_ID, { signal }),
+    ]) {
+      const mock = withAuthToken(new MockFetch());
+      mock.json(WITH_AUDIO);
+      let seen: AbortSignal | undefined;
+      const client = new ColonyClient("col_test_key", {
+        fetch: async (input, init) => {
+          seen = init?.signal ?? undefined;
+          return mock.fetch(input, init);
+        },
+        retry: retryConfig({ maxRetries: 0, baseDelay: 0, maxDelay: 0 }),
+        tokenCache: false,
+      });
+      const controller = new AbortController();
+
+      await call(client, controller.signal);
+      // Every request carries a timeout signal, so only aborting the
+      // caller's controller shows its signal was passed on.
+      expect(seen?.aborted).toBe(false);
+      controller.abort();
+      expect(seen?.aborted).toBe(true);
+    }
+  });
+
+  it("surfaces an edit's refusals with the server's code", async () => {
+    const cases: Array<[status: number, code: string, cls: new (...a: never[]) => Error]> = [
+      [403, "POST_EDIT_WINDOW_EXPIRED", ColonyAuthError],
+      [403, "POST_EDIT_FORBIDDEN", ColonyAuthError],
+      [403, "CONTENT_NOTARISED", ColonyAuthError],
+      [403, "KARMA_TOO_LOW", ColonyAuthError],
+      [404, "POST_NOT_FOUND", ColonyNotFoundError],
+      [404, "AUDIO_NOT_FOUND", ColonyNotFoundError],
+      [400, "AUDIO_NOT_ALLOWED_HERE", ColonyValidationError],
+      [400, "POST_EDIT_LISTING_ENGAGED", ColonyValidationError],
+    ];
+    for (const [status, code, cls] of cases) {
+      const mock = withAuthToken(new MockFetch());
+      mock.json({ detail: { message: "Refused.", code } }, status);
+      const { client } = makeClient(mock);
+      const err = await client.setPostAudio(POST_ID, AUDIO_ID).catch((e: unknown) => e);
+      expect(err, code).toBeInstanceOf(cls);
+      expect((err as ColonyAPIError).code).toBe(code);
+      expect((err as ColonyAPIError).status).toBe(status);
+    }
+  });
+
+  it("surfaces audio a moderator removed as ColonyValidationError on removal too", async () => {
+    const mock = withAuthToken(new MockFetch());
+    mock.json(
+      {
+        detail: {
+          message: "The audio on this post was removed by moderation: it stays.",
+          code: "AUDIO_NOT_ALLOWED_HERE",
+        },
+      },
+      400,
+    );
+    const { client } = makeClient(mock);
+    const err = await client.removePostAudio(POST_ID).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ColonyValidationError);
+    expect((err as ColonyValidationError).code).toBe("AUDIO_NOT_ALLOWED_HERE");
+  });
+
+  it("surfaces the shared hourly limit as ColonyRateLimitError", async () => {
+    const mock = withAuthToken(new MockFetch());
+    mock.json({ detail: { message: "Rate limit exceeded.", code: "RATE_LIMITED" } }, 429, {
+      "Retry-After": "1200",
+    });
+    const { client } = makeClient(mock);
+    const err = await client.removePostAudio(POST_ID).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ColonyRateLimitError);
+    expect((err as ColonyRateLimitError).retryAfter).toBe(1200);
+  });
+
+  it("refuses a truncated or non-string audioId before any request", async () => {
+    for (const bad of ["eae899e1", "EAE899E1", "eae899e1-ab0a-4ba2"]) {
+      const mock = new MockFetch();
+      const { client } = makeClient(mock);
+      const err = await client.setPostAudio(POST_ID, bad).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(RangeError);
+      expect((err as Error).message.startsWith("audioId ")).toBe(true);
+      expect((err as Error).message).toContain("looks like a truncated id");
+      expect(mock.calls).toHaveLength(0);
+    }
+    for (const bad of [undefined, null, 42]) {
+      const mock = new MockFetch();
+      const { client } = makeClient(mock);
+      const err = await client
+        .setPostAudio(POST_ID, bad as unknown as string)
+        .catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(TypeError);
+      expect((err as Error).message.startsWith("audioId ")).toBe(true);
+      expect(mock.calls).toHaveLength(0);
+    }
+  });
+
+  it("refuses a postId that would leave its path segment, or a truncated one, before any request", async () => {
+    for (const bad of ["../users/me", "..", ".", "", "a/b", "eae899e1"]) {
+      for (const call of [
+        (c: ColonyClient) => c.setPostAudio(bad, AUDIO_ID),
+        (c: ColonyClient) => c.removePostAudio(bad),
+      ]) {
+        const mock = new MockFetch();
+        const { client } = makeClient(mock);
+        const err = await call(client).catch((e: unknown) => e);
+        expect(err).toBeInstanceOf(RangeError);
+        expect((err as Error).message.startsWith("postId ")).toBe(true);
+        expect(mock.calls).toHaveLength(0);
+      }
+    }
+  });
+});
+
+describe("updatePost and audio", () => {
+  it("never sends audio_id: the server refuses it there (400 INVALID_INPUT)", async () => {
+    const mock = withAuthToken(new MockFetch());
+    mock.json({ id: POST_ID, title: "Retitled", audio: null });
+    const { client } = makeClient(mock);
+
+    // A JavaScript caller, or one casting past the type, guessing the name.
+    const smuggled = {
+      title: "Retitled",
+      audioId: AUDIO_ID,
+      audio_id: AUDIO_ID,
+    } as unknown as UpdatePostOptions;
+    await client.updatePost(POST_ID, smuggled);
+
+    expect(mock.calls[1]?.method).toBe("PUT");
+    expect(new URL(mock.calls[1]?.url ?? "").pathname).toBe(`/api/v1/posts/${POST_ID}`);
+    expect(sentJson(mock, 1)).toEqual({ title: "Retitled" });
+  });
+
+  it("has no audio option in its type", () => {
+    expectTypeOf<UpdatePostOptions>().not.toHaveProperty("audioId");
+    expectTypeOf<UpdatePostOptions>().not.toHaveProperty("audio_id");
   });
 });

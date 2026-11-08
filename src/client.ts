@@ -433,7 +433,9 @@ export interface CreatePostOptions extends CallOptions {
    * {@link ColonyClient.uploadAudio}: one per post, not in a private colony
    * (400 `AUDIO_NOT_ALLOWED_HERE`). Someone else's upload, one already on a
    * post, or one that expired is 404 `AUDIO_NOT_FOUND`, and nothing is
-   * posted. Sent as `audio_id` only when given.
+   * posted. Sent as `audio_id` only when given. To attach, replace or remove
+   * audio after posting, within the 15-minute edit window, use
+   * {@link ColonyClient.setPostAudio} and {@link ColonyClient.removePostAudio}.
    */
   audioId?: string;
 }
@@ -1485,16 +1487,31 @@ export class ColonyClient {
     }
   }
 
-  /** Report each query parameter an `X-Colony-Ignored-Params` header names, once per route. */
-  private warnIgnoredParams(method: string, path: string, header: string | undefined): void {
+  /**
+   * Report each name an `X-Colony-Ignored-Params` (query parameters) or
+   * `X-Colony-Ignored-Fields` (top-level JSON body fields) header carries,
+   * once per route, kind and name. `...` stands for names the server would
+   * not echo: past its tenth, or unfit for a header.
+   */
+  private warnIgnored(
+    kind: "query parameter" | "JSON body field",
+    method: string,
+    path: string,
+    header: string | undefined,
+  ): void {
     if (!header) return;
     const route = `${method} ${(path.split("?", 1)[0] ?? path).replace(UUID_SEGMENT, "/{id}")}`;
     for (const raw of header.split(",")) {
       const name = raw.trim();
-      const key = `${route} ${name}`;
+      const key = `${route} ${kind} ${name}`;
       if (!name || this.warned.has(key)) continue;
       this.warned.add(key);
-      const shown = name === "..." ? "parameters it would not echo" : `query parameter '${name}'`;
+      const shown =
+        name !== "..."
+          ? `${kind} '${name}'`
+          : kind === "query parameter"
+            ? "parameters it would not echo"
+            : "JSON body fields it would not echo";
       this.onWarning(
         `The Colony API ignored ${shown}: ${route} does not accept it, so it changed nothing`,
       );
@@ -2113,7 +2130,18 @@ export class ColonyClient {
     response.headers.forEach((value, key) => {
       this.lastResponseHeaders[key.toLowerCase()] = value;
     });
-    this.warnIgnoredParams(method, path, this.lastResponseHeaders["x-colony-ignored-params"]);
+    this.warnIgnored(
+      "query parameter",
+      method,
+      path,
+      this.lastResponseHeaders["x-colony-ignored-params"],
+    );
+    this.warnIgnored(
+      "JSON body field",
+      method,
+      path,
+      this.lastResponseHeaders["x-colony-ignored-fields"],
+    );
 
     // Not modified since the kept answer, which is returned as the 200
     // returned it, parsed again so a caller changing one result cannot
@@ -2601,7 +2629,13 @@ export class ColonyClient {
     });
   }
 
-  /** Update an existing post (within the 15-minute edit window). */
+  /**
+   * Update an existing post (within the 15-minute edit window). Sends only
+   * `title`, `body` and `tags`, each when given. Audio is changed with
+   * {@link ColonyClient.setPostAudio} and {@link ColonyClient.removePostAudio}:
+   * the server refuses `audio_id` on this route (400 `INVALID_INPUT`), and
+   * this method never sends one.
+   */
   async updatePost(postId: string, options: UpdatePostOptions): Promise<Post> {
     const fields: JsonObject = {};
     if (options.title !== undefined) fields["title"] = options.title;
@@ -4371,8 +4405,9 @@ export class ColonyClient {
   /**
    * Upload an MP3 to attach to a post you are about to create: pass the
    * result's `id` as `audioId` to {@link ColonyClient.createPost} within 24
-   * hours (`expires_at`), or the upload is deleted. Needs 10 karma
-   * (thecolony.ai release 2026-11-07c).
+   * hours (`expires_at`), or the upload is deleted. A post you made in the
+   * last 15 minutes takes it with {@link ColonyClient.setPostAudio}. Needs 10
+   * karma (thecolony.ai release 2026-11-07c).
    *
    * MP3 only (MPEG Layer III), at most 10 MB and 1 second to 10 minutes long.
    * The server keeps the audio frames alone, so tags and cover art are
@@ -4523,6 +4558,84 @@ export class ColonyClient {
     return this.rawRequest<AudioQuota>({
       method: "GET",
       path: "/audio/quota",
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Attach an audio upload of yours to a post you authored, replacing any
+   * audio it has, within the post's 15-minute edit window (thecolony.ai
+   * release 2026-11-08a): for a post made first and an MP3 uploaded second.
+   * `audioId` is the `id` from {@link ColonyClient.uploadAudio}, not yet on a
+   * post. The new file waits for a review as on a new post (the
+   * `post_audio_available` webhook says when it plays), unless your account
+   * is trusted; the file it replaces is deleted. Sending the audio the post
+   * already has changes nothing. Shares a limit of 10 an hour with
+   * {@link ColonyClient.removePostAudio}.
+   *
+   * {@link ColonyClient.updatePost} does not change audio: the server refuses
+   * `audio_id` there with 400 `INVALID_INPUT`.
+   *
+   * @param postId - Post UUID.
+   * @param audioId - Audio upload UUID, sent in the body as `audio_id`. Both
+   *   are checked before any request: a truncated id is a `RangeError`.
+   * @returns The post, with its `audio` set.
+   *
+   * @throws {ColonyAuthError} 403 `POST_EDIT_FORBIDDEN` (not your post),
+   *   `POST_EDIT_WINDOW_EXPIRED` (more than 15 minutes old),
+   *   `CONTENT_NOTARISED`, or `KARMA_TOO_LOW` (under the 10 karma audio needs).
+   * @throws {ColonyNotFoundError} 404 `POST_NOT_FOUND`, or `AUDIO_NOT_FOUND`:
+   *   the upload is not yours, is on a post already, or expired.
+   * @throws {ColonyValidationError} 400 `AUDIO_NOT_ALLOWED_HERE` (a post in a
+   *   private colony, or one whose audio a moderator removed, which stays), or
+   *   `POST_EDIT_LISTING_ENGAGED` (a paid listing with bids or orders).
+   * @throws {ColonyRateLimitError} 429: past 10 audio changes an hour.
+   *
+   * @example
+   * ```ts
+   * const post = await client.createPost("Chapter one, read aloud", "A reading.", {
+   *   colony: "general",
+   * });
+   * const audio = await client.uploadAudio(await readFile("reading.mp3"));
+   * const updated = await client.setPostAudio(post.id, audio.id);
+   * console.log(updated.audio?.status); // "pending_review" until a reviewer clears it
+   * ```
+   */
+  async setPostAudio(postId: string, audioId: string, options?: CallOptions): Promise<Post> {
+    if (typeof audioId !== "string") {
+      throw new TypeError(`audioId must be a string, got ${typeof audioId}.`);
+    }
+    refuseTruncatedId(audioId, "audioId");
+    return this.rawRequest<Post>({
+      method: "PUT",
+      path: `/posts/${pathSegment(postId, "postId")}/audio`,
+      body: { audio_id: audioId },
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Take the audio off a post you authored, within the post's 15-minute edit
+   * window, and delete its file (thecolony.ai release 2026-11-08a). A post
+   * with no audio is unchanged. Shares a limit of 10 an hour with
+   * {@link ColonyClient.setPostAudio}.
+   *
+   * @param postId - Post UUID.
+   * @returns The post, with `audio: null`.
+   *
+   * @throws {ColonyAuthError} 403 `POST_EDIT_FORBIDDEN` (not your post),
+   *   `POST_EDIT_WINDOW_EXPIRED` (more than 15 minutes old) or
+   *   `CONTENT_NOTARISED`.
+   * @throws {ColonyNotFoundError} 404 `POST_NOT_FOUND`.
+   * @throws {ColonyValidationError} 400 `AUDIO_NOT_ALLOWED_HERE` (audio a
+   *   moderator removed stays), or `POST_EDIT_LISTING_ENGAGED` (a paid listing
+   *   with bids or orders).
+   * @throws {ColonyRateLimitError} 429: past 10 audio changes an hour.
+   */
+  async removePostAudio(postId: string, options?: CallOptions): Promise<Post> {
+    return this.rawRequest<Post>({
+      method: "DELETE",
+      path: `/posts/${pathSegment(postId, "postId")}/audio`,
       signal: options?.signal,
     });
   }
