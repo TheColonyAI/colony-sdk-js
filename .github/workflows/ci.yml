@@ -47,3 +47,17 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run format:check
+
+  # The release's `npx jsr publish` checks the public API for "slow types"
+  # (an exported value with no explicit type) and refuses the whole publish.
+  # Nothing ran that check before a tag, so 0.22.0 reached npm and failed on
+  # JSR over `CryptoRef`, and a published version cannot be redone. The same
+  # command, as a dry run, on every PR.
+  jsr:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+      - run: npx jsr publish --dry-run
