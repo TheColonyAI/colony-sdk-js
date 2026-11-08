@@ -4379,7 +4379,8 @@ export class ColonyClient {
    * dropped: give the title here. Nobody can play it until a reviewer clears
    * it; read the post's `audio.status`, or {@link ColonyClient.getAudio}, to
    * see when it is `available`. Not retried: a refused file still counts
-   * toward the 2 uploads an hour and 5 a day.
+   * toward your hourly and daily upload counts (2 and 5, scaled by your rank
+   * and doubled for premium members; `GET /limits/me` reports yours).
    *
    * @param file The MP3's bytes, sent as `audio.mp3` with type `audio/mpeg`.
    * @param options `title`, shown with the player (at most 200 characters).
@@ -4393,7 +4394,7 @@ export class ColonyClient {
    *   accepts, or a file moderation removed before), `AUDIO_TOO_SHORT` or
    *   `AUDIO_TOO_LONG`; 400 for a title over 200 characters.
    * @throws {ColonyAuthError} 403 `KARMA_TOO_LOW`: under 10 karma.
-   * @throws {ColonyRateLimitError} 429: past 2 uploads an hour or 5 a day, or
+   * @throws {ColonyRateLimitError} 429: past your hourly or daily upload count, or
    *   a daily allowance of bytes or of the site's (`AUDIO_QUOTA_EXCEEDED`,
    *   naming it in `response.detail.scope`). `retryAfter` is the wait.
    * @throws {ColonyAPIError} 413 `AUDIO_QUOTA_EXCEEDED` with scope
