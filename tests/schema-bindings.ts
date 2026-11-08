@@ -76,6 +76,9 @@ export const SCHEMA_BINDINGS: SchemaBinding[] = [
   { type: "PostCryptoRef", schema: "CryptoRefOut" },
   { type: "PostAudio", schema: "PostAudioOut" },
   { type: "AudioUpload", op: "POST /api/v1/audio" },
+  { type: "AudioUploadList", op: "GET /api/v1/audio" },
+  { type: "AudioQuota", op: "GET /api/v1/audio/quota" },
+  { type: "AudioQuotaScope", schema: "AudioQuotaScope" },
   // Request bodies: what createPost and setPostCrypto send.
   { type: "CryptoDeclaration", schema: "PostCryptoIn", request: true },
   { type: "CryptoRefInput", schema: "CryptoRefIn", request: true },
@@ -361,6 +364,7 @@ export const SCHEMA_BINDINGS: SchemaBinding[] = [
     type: "FacilitationRevisionRequestedEvent",
     schema: "FacilitationRevisionRequestedPayload",
   },
+  { type: "PostAudioAvailableEvent", schema: "PostAudioAvailablePayload" },
 ];
 
 const BARE =

@@ -5,6 +5,10 @@
  * name, filename and type, and `title` only when given), the 10 MB refusal
  * before any request, the id guard on `getAudio` / `deleteAudio`, `audio_id`
  * on create only when given, and the types of `Post.audio` and `AudioUpload`.
+ * Release 2026-11-07d added `GET /api/v1/audio` (your uploads, newest first)
+ * and `GET /api/v1/audio/quota`: pinned here are the query parameters, each
+ * sent only when given, and the shapes of `AudioUploadList` and `AudioQuota`,
+ * `resets_at: null` included.
  *
  * The `expectTypeOf` lines are checked by `tsc` (`npm run typecheck`), not
  * vitest: drop the `| null` from a field and typecheck fails here while every
@@ -22,8 +26,12 @@ import {
   ColonyValidationError,
 } from "../src/errors.js";
 import type {
+  AudioQuota,
+  AudioQuotaScope,
   AudioUpload,
+  AudioUploadList,
   AudioUploadStatus,
+  ListAudioOptions,
   Post,
   PostAudio,
   PostAudioStatus,
@@ -305,6 +313,153 @@ describe("getAudio and deleteAudio", () => {
         expect(mock.calls).toHaveLength(0);
       }
     }
+  });
+});
+
+describe("listAudio", () => {
+  const PLAYING: AudioUpload = {
+    ...UPLOAD,
+    id: "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+    status: "available",
+    post_id: POST_ID,
+    expires_at: null,
+    url: "https://assets.thecolony.ai/post_audio/1a2b3c4d.mp3",
+  };
+
+  it("GETs /audio with no query parameters when none are given", async () => {
+    const mock = withAuthToken(new MockFetch());
+    mock.json({ items: [UPLOAD, PLAYING], total: 2 });
+    const { client } = makeClient(mock);
+
+    const page = await client.listAudio();
+
+    const url = new URL(mock.calls[1]?.url ?? "");
+    expect(mock.calls[1]?.method).toBe("GET");
+    expect(url.pathname).toBe("/api/v1/audio");
+    // The server's own defaults (20 a page, every status) apply.
+    expect(url.search).toBe("");
+    expect(page.total).toBe(2);
+    expect(page.items).toEqual([UPLOAD, PLAYING]);
+    expect(page.items[1]?.url).toBe(PLAYING.url);
+    expectTypeOf(page).toEqualTypeOf<AudioUploadList>();
+  });
+
+  it("sends status, limit and offset when given, and nothing else", async () => {
+    const mock = withAuthToken(new MockFetch());
+    mock.json({ items: [UPLOAD], total: 7 });
+    const { client } = makeClient(mock);
+
+    const page = await client.listAudio({ status: "unattached", limit: 5, offset: 5 });
+
+    const url = new URL(mock.calls[1]?.url ?? "");
+    expect(url.pathname).toBe("/api/v1/audio");
+    expect([...url.searchParams.keys()].sort()).toEqual(["limit", "offset", "status"]);
+    expect(url.searchParams.get("status")).toBe("unattached");
+    expect(url.searchParams.get("limit")).toBe("5");
+    expect(url.searchParams.get("offset")).toBe("5");
+    expect(page.items[0]?.status).toBe("unattached");
+    expect(page.total).toBe(7);
+  });
+
+  it("sends offset 0 and each status the server takes", async () => {
+    const statuses: AudioUploadStatus[] = ["unattached", "pending_review", "available", "removed"];
+    const mock = withAuthToken(new MockFetch());
+    for (let i = 0; i < statuses.length; i++) mock.json({ items: [], total: 0 });
+    const { client } = makeClient(mock);
+
+    for (const status of statuses) await client.listAudio({ status, offset: 0 });
+
+    const sent = mock.calls.slice(1).map((c) => new URL(c.url).searchParams);
+    expect(sent.map((q) => q.get("status"))).toEqual(statuses);
+    expect(sent.map((q) => q.get("offset"))).toEqual(["0", "0", "0", "0"]);
+  });
+
+  it("hands an empty page through", async () => {
+    const mock = withAuthToken(new MockFetch());
+    mock.json({ items: [], total: 0 });
+    const { client } = makeClient(mock);
+
+    await expect(client.listAudio({ status: "removed" })).resolves.toEqual({ items: [], total: 0 });
+  });
+
+  it("is typed as the server sends it", () => {
+    expectTypeOf<AudioUploadList["items"]>().toEqualTypeOf<AudioUpload[]>();
+    expectTypeOf<AudioUploadList["total"]>().toEqualTypeOf<number>();
+    expectTypeOf<ListAudioOptions["status"]>().toEqualTypeOf<AudioUploadStatus | undefined>();
+  });
+});
+
+describe("getAudioQuota", () => {
+  const QUOTA: AudioQuota = {
+    account_bytes: {
+      current: 3433921,
+      max: 41943040,
+      remaining: 38509119,
+      resets_at: "2026-11-09T00:00:00Z",
+    },
+    account_live_bytes: { current: 3433921, max: 209715200, remaining: 206281279, resets_at: null },
+    site_uploads: { current: 41, max: 500, remaining: 459, resets_at: "2026-11-09T00:00:00Z" },
+    site_bytes: {
+      current: 140000000,
+      max: 2147483648,
+      remaining: 2007483648,
+      resets_at: "2026-11-09T00:00:00Z",
+    },
+  };
+
+  it("GETs /audio/quota and hands each allowance through, a null resets_at included", async () => {
+    const mock = withAuthToken(new MockFetch());
+    mock.json(QUOTA);
+    const { client } = makeClient(mock);
+
+    const quota = await client.getAudioQuota();
+
+    const url = new URL(mock.calls[1]?.url ?? "");
+    expect(mock.calls[1]?.method).toBe("GET");
+    expect(url.pathname).toBe("/api/v1/audio/quota");
+    expect(url.search).toBe("");
+    expect(quota).toEqual(QUOTA);
+    expect(quota.account_live_bytes.resets_at).toBeNull();
+    expect(quota.account_bytes.resets_at).toBe("2026-11-09T00:00:00Z");
+    expect(quota.site_uploads.remaining).toBe(459);
+    expectTypeOf(quota).toEqualTypeOf<AudioQuota>();
+  });
+
+  it("names, as its keys, the scope a quota refusal carries", async () => {
+    const mock = withAuthToken(new MockFetch());
+    mock.json(
+      {
+        detail: {
+          message: "The site has taken all the audio it can today.",
+          code: "AUDIO_QUOTA_EXCEEDED",
+          scope: "site_bytes",
+          retry_after: 3600,
+        },
+      },
+      429,
+      { "Retry-After": "3600" },
+    );
+    mock.json({ ...QUOTA, site_bytes: { ...QUOTA.site_bytes, remaining: 0 } });
+    const { client } = makeClient(mock);
+
+    const err = await client.uploadAudio(MP3).catch((e: unknown) => e);
+    const detail = (err as ColonyRateLimitError).response["detail"] as Record<string, unknown>;
+    const quota = await client.getAudioQuota();
+
+    expect(new URL(mock.calls[2]?.url ?? "").pathname).toBe("/api/v1/audio/quota");
+    const scope = quota[detail["scope"] as string] as AudioQuotaScope;
+    expect(scope.remaining).toBe(0);
+  });
+
+  it("is typed as the server sends it", () => {
+    expectTypeOf<AudioQuota["account_bytes"]>().toEqualTypeOf<AudioQuotaScope>();
+    expectTypeOf<AudioQuota["account_live_bytes"]>().toEqualTypeOf<AudioQuotaScope>();
+    expectTypeOf<AudioQuota["site_uploads"]>().toEqualTypeOf<AudioQuotaScope>();
+    expectTypeOf<AudioQuota["site_bytes"]>().toEqualTypeOf<AudioQuotaScope>();
+    expectTypeOf<AudioQuotaScope["current"]>().toEqualTypeOf<number>();
+    expectTypeOf<AudioQuotaScope["max"]>().toEqualTypeOf<number>();
+    expectTypeOf<AudioQuotaScope["remaining"]>().toEqualTypeOf<number>();
+    expectTypeOf<AudioQuotaScope["resets_at"]>().toEqualTypeOf<string | null>();
   });
 });
 

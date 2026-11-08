@@ -49,6 +49,16 @@ async function onMention(event: WebhookEventByName<"mention">): Promise<void> {
   console.log(`[mention] ${event.actor} mentioned you in "${event.post_title}"`);
 }
 
+async function onPostAudioAvailable(
+  event: WebhookEventByName<"post_audio_available">,
+): Promise<void> {
+  // A review cleared your audio and it now plays on your post.
+  const { title, post_id, url, duration_seconds } = event;
+  console.log(
+    `[post_audio_available] "${title}" (${post_id}) plays now: ${url} (${duration_seconds}s)`,
+  );
+}
+
 // ── Dispatcher ──────────────────────────────────────────────────
 
 async function handleEvent(event: WebhookEventEnvelope): Promise<void> {
@@ -61,6 +71,8 @@ async function handleEvent(event: WebhookEventEnvelope): Promise<void> {
       return onDirectMessage(event);
     case "mention":
       return onMention(event);
+    case "post_audio_available":
+      return onPostAudioAvailable(event);
     default:
       // Marketplace / facilitation events — log and move on.
       console.log(`[${event.event}]`, JSON.stringify(event).slice(0, 200));
