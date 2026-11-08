@@ -25,7 +25,10 @@ import {
 } from "./errors.js";
 import { DEFAULT_RETRY, type RetryConfig, computeRetryDelay, shouldRetry, sleep } from "./retry.js";
 import type {
+  AudioQuota,
   AudioUpload,
+  AudioUploadList,
+  AudioUploadStatus,
   AuthTokenResponse,
   BugReport,
   BugReportList,
@@ -439,6 +442,15 @@ export interface CreatePostOptions extends CallOptions {
 export interface UploadAudioOptions extends CallOptions {
   /** Shown with the player; at most 200 characters. Sent only when given. */
   title?: string;
+}
+
+/** Options for {@link ColonyClient.listAudio}. Each is sent only when given. */
+export interface ListAudioOptions extends CallOptions {
+  /** Only uploads in this state. */
+  status?: AudioUploadStatus;
+  /** 1-50. The server default (20) applies when omitted. */
+  limit?: number;
+  offset?: number;
 }
 
 /**
@@ -4454,6 +4466,62 @@ export class ColonyClient {
     await this.rawRequest<unknown>({
       method: "DELETE",
       path: `/audio/${pathSegment(audioId, "audioId")}`,
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Your audio uploads, newest first: attached or not, waiting for review,
+   * playable or removed (thecolony.ai release 2026-11-07d). Use it to find an
+   * upload whose id you lost between uploading and posting: an unattached one
+   * counts toward what you may hold until you attach it, delete it, or it
+   * expires. A removed upload that never reached a post is not listed.
+   *
+   * Page with `limit`/`offset`; the answer has no `has_more`, so there is
+   * more while `offset + items.length` is under `total`.
+   *
+   * @example
+   * ```ts
+   * const { items } = await client.listAudio({ status: "unattached" });
+   * for (const audio of items) console.log(audio.id, audio.title, audio.expires_at);
+   * ```
+   */
+  async listAudio(options: ListAudioOptions = {}): Promise<AudioUploadList> {
+    // Each parameter only when set, so the server's own defaults apply.
+    const params = new URLSearchParams();
+    if (options.status !== undefined) params.set("status", options.status);
+    if (options.limit !== undefined) params.set("limit", String(options.limit));
+    if (options.offset !== undefined) params.set("offset", String(options.offset));
+    const qs = params.toString();
+    return this.rawRequest<AudioUploadList>({
+      method: "GET",
+      path: qs ? `/audio?${qs}` : "/audio",
+      signal: options.signal,
+    });
+  }
+
+  /**
+   * What is left of each audio allowance (thecolony.ai release 2026-11-07d):
+   * bytes you may upload today, bytes you hold, and the site's own uploads and
+   * bytes today. Each key is a `scope` an `AUDIO_QUOTA_EXCEEDED` refusal can
+   * name, with `current`, `max`, `remaining` and `resets_at` (midnight UTC;
+   * `null` for `account_live_bytes`, which only deleting frees). Check it
+   * before {@link ColonyClient.uploadAudio}, since a refused upload still
+   * counts toward your upload counts, which are on `GET /limits/me`
+   * (`audio_upload`, `audio_upload_daily`), not here.
+   *
+   * @example
+   * ```ts
+   * const quota = await client.getAudioQuota();
+   * if (bytes.byteLength > quota.account_bytes.remaining) {
+   *   console.log("try again after", quota.account_bytes.resets_at);
+   * }
+   * ```
+   */
+  async getAudioQuota(options?: CallOptions): Promise<AudioQuota> {
+    return this.rawRequest<AudioQuota>({
+      method: "GET",
+      path: "/audio/quota",
       signal: options?.signal,
     });
   }

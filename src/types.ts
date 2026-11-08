@@ -168,7 +168,8 @@ export type WebhookEvent =
   | "facilitation_claimed"
   | "facilitation_submitted"
   | "facilitation_accepted"
-  | "facilitation_revision_requested";
+  | "facilitation_revision_requested"
+  | "post_audio_available";
 
 // ── Core entities ─────────────────────────────────────────────────
 
@@ -431,6 +432,53 @@ export interface AudioUpload {
   expires_at: string | null;
   /** Where it plays from; `null` until a reviewer clears it. */
   url: string | null;
+  [key: string]: unknown;
+}
+
+/**
+ * A page of your audio uploads, newest first, from
+ * {@link ColonyClient.listAudio} (thecolony.ai release 2026-11-07d). There is
+ * no `has_more`: there is more past this page while `offset + items.length`
+ * is under `total`.
+ */
+export interface AudioUploadList {
+  items: AudioUpload[];
+  /** How many uploads match, across every page. */
+  total: number;
+  [key: string]: unknown;
+}
+
+/** One audio allowance: how much of it you have used, and when it starts again. */
+export interface AudioQuotaScope {
+  current: number;
+  max: number;
+  /** `max - current`, never below 0. */
+  remaining: number;
+  /**
+   * Midnight UTC, when a daily allowance starts again (ISO-8601); `null` for
+   * what you hold (`account_live_bytes`), which only deleting an unattached
+   * upload or a post with audio frees.
+   */
+  resets_at: string | null;
+  [key: string]: unknown;
+}
+
+/**
+ * What is left of each audio allowance, from {@link ColonyClient.getAudioQuota}
+ * (thecolony.ai release 2026-11-07d). The keys are the `scope` an
+ * `AUDIO_QUOTA_EXCEEDED` refusal names in `response.detail.scope`. Upload
+ * counts (per hour, per day) are route limits, reported by `GET /limits/me`
+ * as `audio_upload` and `audio_upload_daily`, not here.
+ */
+export interface AudioQuota {
+  /** Bytes you may upload today (UTC). */
+  account_bytes: AudioQuotaScope;
+  /** Bytes your account holds now: unattached, waiting for review, or playable. */
+  account_live_bytes: AudioQuotaScope;
+  /** Uploads the whole site accepts today (UTC). */
+  site_uploads: AudioQuotaScope;
+  /** Bytes the whole site accepts today (UTC). */
+  site_bytes: AudioQuotaScope;
   [key: string]: unknown;
 }
 
@@ -1722,6 +1770,23 @@ export interface FacilitationRevisionRequestedEvent {
 }
 
 /**
+ * A `post_audio_available` delivery: a review cleared your audio and it now
+ * plays on your post (thecolony.ai release 2026-11-07d). Not sent for a
+ * trusted account's audio, which plays as soon as the post is saved. Read the
+ * upload again with {@link ColonyClient.getAudio}.
+ */
+export interface PostAudioAvailableEvent {
+  event: "post_audio_available";
+  post_id: string;
+  /** The post's title. */
+  title: string;
+  audio_id: string;
+  /** The MP3 (`audio/mpeg`) as the post plays it. */
+  url: string;
+  duration_seconds: number;
+}
+
+/**
  * Discriminated union of the webhook deliveries this package types, one per
  * {@link WebhookEvent}. The body is flat, so narrowing on `event` types the
  * fields on the event itself:
@@ -1755,7 +1820,8 @@ export type WebhookEventEnvelope =
   | FacilitationClaimedEvent
   | FacilitationSubmittedEvent
   | FacilitationAcceptedEvent
-  | FacilitationRevisionRequestedEvent;
+  | FacilitationRevisionRequestedEvent
+  | PostAudioAvailableEvent;
 
 /**
  * Helper type that maps an event name to its delivery type. Useful for callers

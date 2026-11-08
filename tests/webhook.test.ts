@@ -2,14 +2,19 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import ts from "typescript";
-import { describe, expect, it } from "vitest";
+import { describe, expect, expectTypeOf, it } from "vitest";
 
 import {
   ColonyWebhookVerificationError,
   verifyAndParseWebhook,
   verifyWebhook,
 } from "../src/webhook.js";
-import type { WebhookEventEnvelope } from "../src/types.js";
+import type {
+  PostAudioAvailableEvent,
+  WebhookEvent,
+  WebhookEventByName,
+  WebhookEventEnvelope,
+} from "../src/types.js";
 
 const SECRET = "this-is-a-test-secret-1234";
 // HMAC-SHA256("hello", SECRET) computed once and pinned for cross-runtime stability.
@@ -45,6 +50,10 @@ const TIP_RECEIVED_BODY =
   '{"event": "tip_received", "tip_id": "9c1d2e3f-4a5b-4c6d-8e7f-0a1b2c3d4e5f", ' +
   '"tipper": "Bob", "amount_sats": 210, "post_id": null, ' +
   '"comment_id": "7e6d5c4b-3a29-4180-9f8e-7d6c5b4a3928"}';
+const POST_AUDIO_AVAILABLE_BODY =
+  '{"event": "post_audio_available", "post_id": "0b2d5e1a-1111-2222-3333-444455556666", ' +
+  '"title": "Chapter one, read aloud", "audio_id": "8b1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d", ' +
+  '"url": "https://assets.thecolony.ai/post_audio/8b1c2d3e.mp3", "duration_seconds": 214.6}';
 
 describe("verifyWebhook", () => {
   it("accepts a valid signature on a string payload", async () => {
@@ -120,6 +129,21 @@ describe("verifyAndParseWebhook", () => {
     expect(amount).toBe(210);
     expect(event.post_id).toBeNull();
     expect(event.comment_id).toBe("7e6d5c4b-3a29-4180-9f8e-7d6c5b4a3928");
+  });
+
+  it("reads a post_audio_available delivery: the post, the upload and the MP3", async () => {
+    const sig = await sign(POST_AUDIO_AVAILABLE_BODY, SECRET);
+    const event = await verifyAndParseWebhook(POST_AUDIO_AVAILABLE_BODY, sig, SECRET);
+    expect(event.event).toBe("post_audio_available");
+    if (event.event !== "post_audio_available") throw new Error("not narrowed");
+    expectTypeOf(event).toEqualTypeOf<PostAudioAvailableEvent>();
+    const url: string = event.url;
+    const seconds: number = event.duration_seconds;
+    expect(event.post_id).toBe("0b2d5e1a-1111-2222-3333-444455556666");
+    expect(event.title).toBe("Chapter one, read aloud");
+    expect(event.audio_id).toBe("8b1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d");
+    expect(url).toBe("https://assets.thecolony.ai/post_audio/8b1c2d3e.mp3");
+    expect(seconds).toBe(214.6);
   });
 
   it("throws ColonyWebhookVerificationError on bad signature", async () => {
@@ -202,8 +226,24 @@ describe("webhook delivery types", () => {
         if (e.event === "comment_created") { const c: string = e.comment_id; }
         if (e.event === "direct_message") { const s: string = e.sender_display_name; }
         if (e.event === "tip_received") { const p: string | null = e.post_id; }
+        if (e.event === "post_audio_available") {
+          const audio: string = e.audio_id;
+          const url: string = e.url;
+          const seconds: number = e.duration_seconds;
+        }
       `),
     ).toEqual([]);
+  }, 30_000);
+
+  it("subscribes to and maps post_audio_available like the other events", () => {
+    expectTypeOf<"post_audio_available">().toExtend<WebhookEvent>();
+    expectTypeOf<
+      WebhookEventByName<"post_audio_available">
+    >().toEqualTypeOf<PostAudioAvailableEvent>();
+    // The audio's url is the MP3 the post plays, never null: the event is
+    // sent only once a review has cleared it.
+    expectTypeOf<PostAudioAvailableEvent["url"]>().toEqualTypeOf<string>();
+    expect(diagnostics(`if (e.event === "post_audio_available") { e.status; }`)).not.toEqual([]);
   }, 30_000);
 
   it("has no nested payload and no delivery_id in the body", () => {

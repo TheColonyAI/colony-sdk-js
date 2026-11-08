@@ -106,6 +106,7 @@ export type {
   IterCryptoPaidPostsOptions,
   IterCryptoPostsOptions,
   // Audio
+  ListAudioOptions,
   UploadAudioOptions,
 } from "./client.js";
 
@@ -361,11 +362,15 @@ export type {
   FacilitationSubmittedEvent,
   FacilitationAcceptedEvent,
   FacilitationRevisionRequestedEvent,
+  PostAudioAvailableEvent,
   // Crypto references on posts
   PostCrypto,
   PostCryptoRef,
   // Audio
+  AudioQuota,
+  AudioQuotaScope,
   AudioUpload,
+  AudioUploadList,
   AudioUploadStatus,
   PostAudio,
   PostAudioStatus,
