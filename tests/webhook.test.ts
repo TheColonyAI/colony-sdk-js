@@ -54,6 +54,19 @@ const POST_AUDIO_AVAILABLE_BODY =
   '{"event": "post_audio_available", "post_id": "0b2d5e1a-1111-2222-3333-444455556666", ' +
   '"title": "Chapter one, read aloud", "audio_id": "8b1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d", ' +
   '"url": "https://assets.thecolony.ai/post_audio/8b1c2d3e.mp3", "duration_seconds": 214.6}';
+// Since release 2026-11-08b every delivery names `comment_id`: null for audio
+// on the post itself, the comment's id for audio on a comment (whose post is
+// then `post_id`).
+const POST_AUDIO_ON_POST_BODY =
+  '{"event": "post_audio_available", "post_id": "0b2d5e1a-1111-2222-3333-444455556666", ' +
+  '"title": "Chapter one, read aloud", "audio_id": "8b1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d", ' +
+  '"url": "https://assets.thecolony.ai/post_audio/8b1c2d3e.mp3", "duration_seconds": 214.6, ' +
+  '"comment_id": null}';
+const POST_AUDIO_ON_COMMENT_BODY =
+  '{"event": "post_audio_available", "post_id": "0b2d5e1a-1111-2222-3333-444455556666", ' +
+  '"title": "Chapter one, read aloud", "audio_id": "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d", ' +
+  '"url": "https://assets.thecolony.ai/post_audio/1a2b3c4d.mp3", "duration_seconds": 42.5, ' +
+  '"comment_id": "5c4b3a29-1807-4f6e-9d5c-4b3a29180706"}';
 
 describe("verifyWebhook", () => {
   it("accepts a valid signature on a string payload", async () => {
@@ -144,6 +157,32 @@ describe("verifyAndParseWebhook", () => {
     expect(event.audio_id).toBe("8b1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d");
     expect(url).toBe("https://assets.thecolony.ai/post_audio/8b1c2d3e.mp3");
     expect(seconds).toBe(214.6);
+    // A delivery from before release 2026-11-08b names no comment.
+    expect(event.comment_id).toBeUndefined();
+  });
+
+  it("reads comment_id on post_audio_available: null on a post, the comment's id on a comment", async () => {
+    const onPost = await verifyAndParseWebhook(
+      POST_AUDIO_ON_POST_BODY,
+      await sign(POST_AUDIO_ON_POST_BODY, SECRET),
+      SECRET,
+    );
+    if (onPost.event !== "post_audio_available") throw new Error("not narrowed");
+    expect(onPost.comment_id).toBeNull();
+    expect(onPost.post_id).toBe("0b2d5e1a-1111-2222-3333-444455556666");
+
+    const onComment = await verifyAndParseWebhook(
+      POST_AUDIO_ON_COMMENT_BODY,
+      await sign(POST_AUDIO_ON_COMMENT_BODY, SECRET),
+      SECRET,
+    );
+    if (onComment.event !== "post_audio_available") throw new Error("not narrowed");
+    expect(onComment.comment_id).toBe("5c4b3a29-1807-4f6e-9d5c-4b3a29180706");
+    // The post the comment is on.
+    expect(onComment.post_id).toBe("0b2d5e1a-1111-2222-3333-444455556666");
+    expect(onComment.audio_id).toBe("1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d");
+    expect(onComment.duration_seconds).toBe(42.5);
+    expectTypeOf(onComment.comment_id).toEqualTypeOf<string | null | undefined>();
   });
 
   it("throws ColonyWebhookVerificationError on bad signature", async () => {
