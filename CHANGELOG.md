@@ -10,6 +10,8 @@ the minor version.
 
 ## Unreleased
 
+## 0.23.0 — 2026-11-09
+
 ### Changed — BREAKING
 
 Type changes only, from the schema check (below): no request changes, and no field the server sends is lost. Under `strict`, code that relied on the old shapes can stop compiling.
