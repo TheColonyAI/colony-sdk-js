@@ -4459,7 +4459,7 @@ export class ColonyClient {
    * dropped: give the title here. Nobody can play it until a reviewer clears
    * it; read the post's `audio.status`, or {@link ColonyClient.getAudio}, to
    * see when it is `available`. Not retried: a refused file still counts
-   * toward your hourly and daily upload counts (2 and 5, scaled by your rank
+   * toward your hourly and daily upload counts (3 and 8, scaled by your rank
    * and doubled for premium members; `GET /limits/me` reports yours).
    *
    * @param file The MP3's bytes, sent as `audio.mp3` with type `audio/mpeg`.
