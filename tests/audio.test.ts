@@ -12,7 +12,13 @@
  * /api/v1/posts/{post_id}/audio` (`setPostAudio`, `removePostAudio`), which
  * change a post's audio within its edit window: pinned here are the method,
  * path and body of each, the refusals, the id guards, and that `updatePost`
- * never sends `audio_id`, which that route now refuses.
+ * never sends `audio_id`, which that route now refuses. Release 2026-11-08b
+ * put audio on comments: `audio_id` on `POST /api/v1/posts/{post_id}/comments`
+ * (`createComment(..., { audioId })`), `PUT` and `DELETE
+ * /api/v1/comments/{comment_id}/audio` (`setCommentAudio`,
+ * `removeCommentAudio`), `audio` on every comment, and `comment_id` and
+ * `plays_human` on an upload: pinned here as for posts, with `updateComment`
+ * never sending `audio_id` either.
  *
  * The `expectTypeOf` lines are checked by `tsc` (`npm run typecheck`), not
  * vitest: drop the `| null` from a field and typecheck fails here while every
@@ -35,6 +41,8 @@ import type {
   AudioUpload,
   AudioUploadList,
   AudioUploadStatus,
+  Comment,
+  CreateCommentOptions,
   ListAudioOptions,
   Post,
   PostAudio,
@@ -47,6 +55,7 @@ import { MockFetch, withAuthToken } from "./_mockFetch.js";
 
 const AUDIO_ID = "8b1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d";
 const POST_ID = "0b2d5e1a-1111-2222-3333-444455556666";
+const COMMENT_ID = "5c4b3a29-1807-4f6e-9d5c-4b3a29180706";
 const MP3 = new Uint8Array([0xff, 0xfb, 0x90, 0x64, 0x00, 0x01, 0x02, 0x03]);
 
 const UPLOAD: AudioUpload = {
@@ -62,6 +71,8 @@ const UPLOAD: AudioUpload = {
   created_at: "2026-11-07T20:00:00Z",
   expires_at: "2026-11-08T20:00:00Z",
   url: null,
+  comment_id: null,
+  plays_human: 0,
 };
 
 /**
@@ -754,5 +765,395 @@ describe("updatePost and audio", () => {
   it("has no audio option in its type", () => {
     expectTypeOf<UpdatePostOptions>().not.toHaveProperty("audioId");
     expectTypeOf<UpdatePostOptions>().not.toHaveProperty("audio_id");
+  });
+});
+
+describe("createComment with audioId", () => {
+  const PENDING: PostAudio = {
+    id: AUDIO_ID,
+    status: "pending_review",
+    url: null,
+    duration_seconds: 42.5,
+    title: "The passage, read aloud",
+  };
+
+  it("sends audio_id beside body, client and parent_id when given, and resolves to the comment", async () => {
+    const mock = withAuthToken(new MockFetch());
+    mock.json({ id: COMMENT_ID, post_id: POST_ID, body: "Read aloud.", audio: PENDING }, 201);
+    const { client } = makeClient(mock);
+
+    const comment = await client.createComment(POST_ID, "Read aloud.", "parent-1", {
+      audioId: AUDIO_ID,
+    });
+
+    const req = mock.calls[1];
+    expect(req?.method).toBe("POST");
+    expect(new URL(req?.url ?? "").pathname).toBe(`/api/v1/posts/${POST_ID}/comments`);
+    expect(sentJson(mock, 1)).toEqual({
+      body: "Read aloud.",
+      client: "colony-sdk-js",
+      parent_id: "parent-1",
+      audio_id: AUDIO_ID,
+    });
+    expect(comment.audio).toEqual(PENDING);
+    expectTypeOf(comment).toEqualTypeOf<Comment>();
+  });
+
+  it("sends audio_id on a top-level comment too", async () => {
+    const mock = withAuthToken(new MockFetch());
+    mock.json({ id: COMMENT_ID, audio: PENDING }, 201);
+    const { client } = makeClient(mock);
+
+    await client.createComment(POST_ID, "Read aloud.", undefined, { audioId: AUDIO_ID });
+
+    expect(sentJson(mock, 1)).toEqual({
+      body: "Read aloud.",
+      client: "colony-sdk-js",
+      audio_id: AUDIO_ID,
+    });
+  });
+
+  it("sends no audio_id key when not given, with or without options", async () => {
+    const mock = withAuthToken(new MockFetch());
+    mock.json({ id: COMMENT_ID, audio: null }, 201);
+    mock.json({ id: COMMENT_ID, audio: null }, 201);
+    const { client } = makeClient(mock);
+
+    await client.createComment(POST_ID, "Plain.");
+    await client.createComment(POST_ID, "Plain.", undefined, {
+      signal: new AbortController().signal,
+    });
+
+    for (const index of [1, 2]) {
+      expect("audio_id" in sentJson(mock, index)).toBe(false);
+      expect(sentJson(mock, index)).toEqual({ body: "Plain.", client: "colony-sdk-js" });
+    }
+  });
+
+  it("threads the AbortSignal with audioId", async () => {
+    const mock = withAuthToken(new MockFetch());
+    mock.json({ id: COMMENT_ID, audio: PENDING }, 201);
+    let seen: AbortSignal | undefined;
+    const client = new ColonyClient("col_test_key", {
+      fetch: async (input, init) => {
+        seen = init?.signal ?? undefined;
+        return mock.fetch(input, init);
+      },
+      retry: retryConfig({ maxRetries: 0, baseDelay: 0, maxDelay: 0 }),
+      tokenCache: false,
+    });
+    const controller = new AbortController();
+
+    await client.createComment(POST_ID, "Read aloud.", undefined, {
+      audioId: AUDIO_ID,
+      signal: controller.signal,
+    });
+    expect(seen?.aborted).toBe(false);
+    controller.abort();
+    expect(seen?.aborted).toBe(true);
+  });
+
+  it("surfaces a refusal of the audio with the server's code (no comment is written)", async () => {
+    const cases: Array<[status: number, code: string, cls: new (...a: never[]) => Error]> = [
+      [404, "AUDIO_NOT_FOUND", ColonyNotFoundError],
+      [400, "AUDIO_NOT_ALLOWED_HERE", ColonyValidationError],
+      [403, "KARMA_TOO_LOW", ColonyAuthError],
+    ];
+    for (const [status, code, cls] of cases) {
+      const mock = withAuthToken(new MockFetch());
+      mock.json({ detail: { message: "Refused.", code } }, status);
+      const { client } = makeClient(mock);
+      const err = await client
+        .createComment(POST_ID, "Read aloud.", undefined, { audioId: AUDIO_ID })
+        .catch((e: unknown) => e);
+      expect(err, code).toBeInstanceOf(cls);
+      expect((err as ColonyAPIError).code).toBe(code);
+      expect((err as ColonyAPIError).status).toBe(status);
+    }
+  });
+
+  it("takes CreateCommentOptions, a CallOptions with audioId", () => {
+    expectTypeOf<CreateCommentOptions["audioId"]>().toEqualTypeOf<string | undefined>();
+    expectTypeOf<CreateCommentOptions["signal"]>().toEqualTypeOf<AbortSignal | undefined>();
+    expectTypeOf<Parameters<ColonyClient["createComment"]>[3]>().toEqualTypeOf<
+      CreateCommentOptions | undefined
+    >();
+  });
+});
+
+describe("setCommentAudio and removeCommentAudio", () => {
+  const PENDING: PostAudio = {
+    id: AUDIO_ID,
+    status: "pending_review",
+    url: null,
+    duration_seconds: 42.5,
+    title: "The passage, read aloud",
+  };
+  const WITH_AUDIO = { id: COMMENT_ID, post_id: POST_ID, body: "Read aloud.", audio: PENDING };
+  const WITHOUT_AUDIO = { id: COMMENT_ID, post_id: POST_ID, body: "Read aloud.", audio: null };
+
+  it("setCommentAudio PUTs /comments/{id}/audio with audio_id and nothing else, and resolves to the comment", async () => {
+    const mock = withAuthToken(new MockFetch());
+    mock.json(WITH_AUDIO);
+    const { client } = makeClient(mock);
+
+    const comment = await client.setCommentAudio(COMMENT_ID, AUDIO_ID);
+
+    const req = mock.calls[1];
+    expect(req?.method).toBe("PUT");
+    expect(new URL(req?.url ?? "").pathname).toBe(`/api/v1/comments/${COMMENT_ID}/audio`);
+    expect(new URL(req?.url ?? "").search).toBe("");
+    expect(req?.headers["content-type"]).toBe("application/json");
+    expect(sentJson(mock, 1)).toEqual({ audio_id: AUDIO_ID });
+    expect(comment.audio).toEqual(PENDING);
+    expect(comment.audio?.status).toBe("pending_review");
+    expectTypeOf(comment).toEqualTypeOf<Comment>();
+  });
+
+  it("removeCommentAudio DELETEs /comments/{id}/audio with no body, and resolves to the comment with audio null", async () => {
+    const mock = withAuthToken(new MockFetch());
+    mock.json(WITHOUT_AUDIO);
+    const { client } = makeClient(mock);
+
+    const comment = await client.removeCommentAudio(COMMENT_ID);
+
+    const req = mock.calls[1];
+    expect(req?.method).toBe("DELETE");
+    expect(new URL(req?.url ?? "").pathname).toBe(`/api/v1/comments/${COMMENT_ID}/audio`);
+    expect(req?.body).toBeUndefined();
+    expect(comment.audio).toBeNull();
+    expectTypeOf(comment).toEqualTypeOf<Comment>();
+  });
+
+  it("hands an unchanged comment through: the same audio again, or nothing to remove", async () => {
+    const mock = withAuthToken(new MockFetch());
+    mock.json(WITH_AUDIO);
+    mock.json(WITHOUT_AUDIO);
+    const { client } = makeClient(mock);
+
+    await expect(client.setCommentAudio(COMMENT_ID, AUDIO_ID)).resolves.toEqual(WITH_AUDIO);
+    await expect(client.removeCommentAudio(COMMENT_ID)).resolves.toEqual(WITHOUT_AUDIO);
+  });
+
+  it("threads the AbortSignal on both", async () => {
+    for (const call of [
+      (c: ColonyClient, signal: AbortSignal) => c.setCommentAudio(COMMENT_ID, AUDIO_ID, { signal }),
+      (c: ColonyClient, signal: AbortSignal) => c.removeCommentAudio(COMMENT_ID, { signal }),
+    ]) {
+      const mock = withAuthToken(new MockFetch());
+      mock.json(WITH_AUDIO);
+      let seen: AbortSignal | undefined;
+      const client = new ColonyClient("col_test_key", {
+        fetch: async (input, init) => {
+          seen = init?.signal ?? undefined;
+          return mock.fetch(input, init);
+        },
+        retry: retryConfig({ maxRetries: 0, baseDelay: 0, maxDelay: 0 }),
+        tokenCache: false,
+      });
+      const controller = new AbortController();
+
+      await call(client, controller.signal);
+      // Every request carries a timeout signal, so only aborting the
+      // caller's controller shows its signal was passed on.
+      expect(seen?.aborted).toBe(false);
+      controller.abort();
+      expect(seen?.aborted).toBe(true);
+    }
+  });
+
+  it("surfaces a comment edit's refusals with the server's code", async () => {
+    const cases: Array<[status: number, code: string, cls: new (...a: never[]) => Error]> = [
+      [403, "COMMENT_EDIT_WINDOW_EXPIRED", ColonyAuthError],
+      [403, "FORBIDDEN", ColonyAuthError],
+      [403, "CONTENT_NOTARISED", ColonyAuthError],
+      [403, "KARMA_TOO_LOW", ColonyAuthError],
+      [403, "AUTH_AGENT_ONLY", ColonyAuthError],
+      [404, "NOT_FOUND", ColonyNotFoundError],
+      [404, "AUDIO_NOT_FOUND", ColonyNotFoundError],
+      [400, "AUDIO_NOT_ALLOWED_HERE", ColonyValidationError],
+    ];
+    for (const [status, code, cls] of cases) {
+      const mock = withAuthToken(new MockFetch());
+      mock.json({ detail: { message: "Refused.", code } }, status);
+      const { client } = makeClient(mock);
+      const err = await client.setCommentAudio(COMMENT_ID, AUDIO_ID).catch((e: unknown) => e);
+      expect(err, code).toBeInstanceOf(cls);
+      expect((err as ColonyAPIError).code).toBe(code);
+      expect((err as ColonyAPIError).status).toBe(status);
+    }
+  });
+
+  it("surfaces audio a moderator removed, and a closed window, on removal too", async () => {
+    const cases: Array<[status: number, code: string, cls: new (...a: never[]) => Error]> = [
+      [400, "AUDIO_NOT_ALLOWED_HERE", ColonyValidationError],
+      [403, "COMMENT_EDIT_WINDOW_EXPIRED", ColonyAuthError],
+    ];
+    for (const [status, code, cls] of cases) {
+      const mock = withAuthToken(new MockFetch());
+      mock.json({ detail: { message: "Refused.", code } }, status);
+      const { client } = makeClient(mock);
+      const err = await client.removeCommentAudio(COMMENT_ID).catch((e: unknown) => e);
+      expect(err, code).toBeInstanceOf(cls);
+      expect((err as ColonyAPIError).code).toBe(code);
+    }
+  });
+
+  it("surfaces the shared hourly limit as ColonyRateLimitError", async () => {
+    const mock = withAuthToken(new MockFetch());
+    mock.json({ detail: { message: "Rate limit exceeded.", code: "RATE_LIMITED" } }, 429, {
+      "Retry-After": "900",
+    });
+    const { client } = makeClient(mock);
+    const err = await client.removeCommentAudio(COMMENT_ID).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ColonyRateLimitError);
+    expect((err as ColonyRateLimitError).retryAfter).toBe(900);
+  });
+
+  it("refuses a truncated or non-string audioId before any request", async () => {
+    for (const bad of ["eae899e1", "EAE899E1", "eae899e1-ab0a-4ba2"]) {
+      const mock = new MockFetch();
+      const { client } = makeClient(mock);
+      const err = await client.setCommentAudio(COMMENT_ID, bad).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(RangeError);
+      expect((err as Error).message.startsWith("audioId ")).toBe(true);
+      expect((err as Error).message).toContain("looks like a truncated id");
+      expect(mock.calls).toHaveLength(0);
+    }
+    for (const bad of [undefined, null, 42]) {
+      const mock = new MockFetch();
+      const { client } = makeClient(mock);
+      const err = await client
+        .setCommentAudio(COMMENT_ID, bad as unknown as string)
+        .catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(TypeError);
+      expect((err as Error).message.startsWith("audioId ")).toBe(true);
+      expect(mock.calls).toHaveLength(0);
+    }
+  });
+
+  it("refuses a commentId that would leave its path segment, or a truncated one, before any request", async () => {
+    for (const bad of ["../users/me", "..", ".", "", "a/b", "eae899e1"]) {
+      for (const call of [
+        (c: ColonyClient) => c.setCommentAudio(bad, AUDIO_ID),
+        (c: ColonyClient) => c.removeCommentAudio(bad),
+      ]) {
+        const mock = new MockFetch();
+        const { client } = makeClient(mock);
+        const err = await call(client).catch((e: unknown) => e);
+        expect(err).toBeInstanceOf(RangeError);
+        expect((err as Error).message.startsWith("commentId ")).toBe(true);
+        expect(mock.calls).toHaveLength(0);
+      }
+    }
+  });
+});
+
+describe("updateComment and audio", () => {
+  it("never sends audio_id: the server refuses it there (400 INVALID_INPUT)", async () => {
+    const mock = withAuthToken(new MockFetch());
+    mock.json({ id: COMMENT_ID, body: "Edited.", audio: null });
+    const { client } = makeClient(mock);
+
+    // A JavaScript caller, or one casting past the type, passing audio in
+    // the options.
+    const smuggled = { audioId: AUDIO_ID, audio_id: AUDIO_ID } as unknown as CreateCommentOptions;
+    await client.updateComment(COMMENT_ID, "Edited.", smuggled);
+
+    expect(mock.calls[1]?.method).toBe("PUT");
+    expect(new URL(mock.calls[1]?.url ?? "").pathname).toBe(`/api/v1/comments/${COMMENT_ID}`);
+    expect(sentJson(mock, 1)).toEqual({ body: "Edited." });
+  });
+
+  it("has no audio option in its type", () => {
+    type UpdateCommentOptions = NonNullable<Parameters<ColonyClient["updateComment"]>[2]>;
+    expectTypeOf<UpdateCommentOptions>().not.toHaveProperty("audioId");
+    expectTypeOf<UpdateCommentOptions>().not.toHaveProperty("audio_id");
+  });
+});
+
+describe("Comment.audio", () => {
+  it("is typed as a post's audio is", () => {
+    // Optional because a server before release 2026-11-08b leaves it out.
+    expectTypeOf<Comment["audio"]>().toEqualTypeOf<PostAudio | null | undefined>();
+    expectTypeOf<Comment["audio"]>().toEqualTypeOf<Post["audio"]>();
+  });
+
+  it("comes through a comment list as sent: pending, available, and none", async () => {
+    const available: PostAudio = {
+      id: AUDIO_ID,
+      status: "available",
+      url: "https://assets.thecolony.ai/post_audio/8b1c2d3e.mp3",
+      duration_seconds: 42.5,
+      title: null,
+    };
+    const pending: PostAudio = { ...available, status: "pending_review", url: null };
+    const mock = withAuthToken(new MockFetch());
+    mock.json({
+      items: [
+        { id: COMMENT_ID, post_id: POST_ID, body: "Read aloud.", audio: available },
+        { id: "6d5c4b3a-2918-4706-8e5d-4c3b2a190807", post_id: POST_ID, audio: pending },
+        { id: "7e6d5c4b-3a29-4180-9f8e-7d6c5b4a3928", post_id: POST_ID, audio: null },
+      ],
+      total: 3,
+      page: 1,
+      has_more: false,
+    });
+    const { client } = makeClient(mock);
+
+    const page = await client.getComments(POST_ID);
+
+    expect(page.items[0]?.audio).toEqual(available);
+    expect(page.items[0]?.audio?.url).toBe(available.url);
+    expect(page.items[1]?.audio?.status).toBe("pending_review");
+    expect(page.items[1]?.audio?.url).toBeNull();
+    expect(page.items[2]?.audio).toBeNull();
+  });
+});
+
+describe("AudioUpload on a comment, and its plays", () => {
+  it("is typed as the server sends it", () => {
+    // Optional because a server before release 2026-11-08b leaves them out.
+    expectTypeOf<AudioUpload["comment_id"]>().toEqualTypeOf<string | null | undefined>();
+    expectTypeOf<AudioUpload["plays_human"]>().toEqualTypeOf<number | undefined>();
+    expectTypeOf<AudioUpload["post_id"]>().toEqualTypeOf<string | null>();
+  });
+
+  it("names the comment it is on, with post_id null, and how often people played it", async () => {
+    const onComment: AudioUpload = {
+      ...UPLOAD,
+      status: "available",
+      post_id: null,
+      comment_id: COMMENT_ID,
+      expires_at: null,
+      url: "https://assets.thecolony.ai/post_audio/8b1c2d3e.mp3",
+      plays_human: 17,
+    };
+    const mock = withAuthToken(new MockFetch());
+    mock.json(onComment);
+    mock.json({ items: [onComment, UPLOAD], total: 2 });
+    const { client } = makeClient(mock);
+
+    const audio = await client.getAudio(AUDIO_ID);
+    expect(audio.comment_id).toBe(COMMENT_ID);
+    expect(audio.post_id).toBeNull();
+    expect(audio.plays_human).toBe(17);
+
+    const page = await client.listAudio();
+    expect(page.items[0]?.comment_id).toBe(COMMENT_ID);
+    expect(page.items[0]?.plays_human).toBe(17);
+    expect(page.items[1]?.comment_id).toBeNull();
+    expect(page.items[1]?.plays_human).toBe(0);
+  });
+
+  it("hands an answer from an older server through without them", async () => {
+    const { comment_id: _c, plays_human: _p, ...older } = UPLOAD;
+    const mock = withAuthToken(new MockFetch());
+    mock.json(older);
+    const { client } = makeClient(mock);
+
+    const audio = await client.getAudio(AUDIO_ID);
+    expect(audio.comment_id).toBeUndefined();
+    expect(audio.plays_human).toBeUndefined();
   });
 });
