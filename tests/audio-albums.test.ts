@@ -405,15 +405,35 @@ describe("setAlbumTracks", () => {
     expect(detail["max_tracks"]).toBe(30);
   });
 
-  it("surfaces the request schema's 422 (over 30 ids) as ColonyValidationError", async () => {
+  it("surfaces an empty list for an album on a post as ColonyValidationError (release 2026-11-10a)", async () => {
+    const mock = withAuthToken(new MockFetch());
+    mock.json(
+      {
+        detail: {
+          message:
+            "An album on a post keeps at least one track; DELETE /api/v1/posts/{post_id}/album " +
+            "takes it off and deletes it.",
+          code: "INVALID_INPUT",
+        },
+      },
+      400,
+    );
+    const err = await refusal(makeClient(mock.fetch).setAlbumTracks(ALBUM_ID, []));
+    expect(sentJson(mock, 1)).toEqual({ audio_ids: [] });
+    expect(err).toBeInstanceOf(ColonyValidationError);
+    expect((err as ColonyValidationError).code).toBe("INVALID_INPUT");
+    expect((err as ColonyValidationError).status).toBe(400);
+  });
+
+  it("surfaces the request schema's 422 (an id that is not a UUID) as ColonyValidationError", async () => {
     const mock = withAuthToken(new MockFetch());
     mock.json(
       {
         detail: [
           {
-            type: "too_long",
-            loc: ["body", "audio_ids"],
-            msg: "List should have at most 30 items after validation, not 31",
+            type: "uuid_parsing",
+            loc: ["body", "audio_ids", 0],
+            msg: "Input should be a valid UUID",
           },
         ],
       },

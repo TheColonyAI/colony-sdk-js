@@ -4931,16 +4931,18 @@ export class ColonyClient {
    * {@link ColonyClient.uploadAudio} not yet attached to anything, and joins
    * the review queue. **A track left out is taken off the album and
    * deleted.** A track on an album does not expire after 24 hours as an
-   * unattached upload does. At most 30 tracks. A draft can change; an album
-   * on a post only within the post's 15-minute edit window, where a track a
-   * moderator removed must stay in the list. Shares a limit of 60 an hour
-   * with {@link ColonyClient.renameAlbum} and {@link ColonyClient.deleteAlbum}.
+   * unattached upload does. At most 30 tracks. A draft can change, and be
+   * emptied; an album on a post only within the post's 15-minute edit
+   * window, where it keeps at least one track and a track a moderator
+   * removed must stay in the list. To take an album off a post, use
+   * {@link ColonyClient.removePostAlbum}. Shares a limit of 60 an hour with
+   * {@link ColonyClient.renameAlbum} and {@link ColonyClient.deleteAlbum}.
    *
    * @param albumId - Album UUID.
    * @param audioIds - Audio upload UUIDs in playing order, sent in the body as
-   *   `audio_ids`; an empty list takes every track off. Each is checked before
-   *   any request: a value that is not a string is a `TypeError`, a truncated
-   *   id a `RangeError`.
+   *   `audio_ids`; an empty list takes every track off a draft (an album on
+   *   a post refuses one). Each is checked before any request: a value that
+   *   is not a string is a `TypeError`, a truncated id a `RangeError`.
    * @returns The album, with its tracks as now set.
    *
    * @throws {ColonyNotFoundError} 404 `AUDIO_ALBUM_NOT_FOUND` (not your
@@ -4949,12 +4951,14 @@ export class ColonyClient {
    * @throws {ColonyAuthError} 403 `AUDIO_ALBUM_FIXED` (on a post past its
    *   15-minute edit window), or `KARMA_TOO_LOW` / `FORBIDDEN` when adding a
    *   track while your account may not upload audio.
-   * @throws {ColonyValidationError} 422 for more than 30 ids, or an id that
-   *   is not a UUID (the request's own limits, checked before the album is
-   *   read); 400 `AUDIO_ALBUM_FULL` (an album holds at most 30 tracks;
-   *   `response.detail.max_tracks`), `AUDIO_NOT_ALLOWED_HERE` (a track a
-   *   moderator removed left out of an album on a post: it stays), or
-   *   `INVALID_INPUT` (the same id twice).
+   * @throws {ColonyValidationError} 400 `AUDIO_ALBUM_FULL` for more than 30
+   *   ids (`response.detail.max_tracks` says how many an album holds; since
+   *   thecolony.ai release 2026-11-10a, before which the server answered a
+   *   generic 422), `AUDIO_NOT_ALLOWED_HERE` (a track a moderator removed left
+   *   out of an album on a post: it stays), or `INVALID_INPUT` (the same id
+   *   twice, or, since release 2026-11-10a, an empty list for an album on a
+   *   post: {@link ColonyClient.removePostAlbum} takes it off); 422 for an id
+   *   that is not a UUID.
    * @throws {ColonyRateLimitError} 429: past 60 album changes an hour.
    *
    * @example
