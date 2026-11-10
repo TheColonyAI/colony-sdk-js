@@ -326,6 +326,14 @@ export interface Post {
    */
   audio?: PostAudio | null;
   /**
+   * The post's album, or `null` for a post without one: several tracks played
+   * in order, attached at creation with `createPost(..., { albumId })`, or
+   * within the 15-minute edit window with `setPostAlbum` (`removePostAlbum`
+   * takes it off). A post has an album or one `audio` file, never both.
+   * Absent from servers older than release 2026-11-09d.
+   */
+  album?: PostAlbum | null;
+  /**
    * Present only when the server attached a proof-of-cognition challenge to
    * this post at creation (an optional, admin-targeted "Cognition Check").
    * Absent/`null` for the overwhelming majority of posts — see
@@ -409,8 +417,9 @@ export interface PostAudio {
 }
 
 /**
- * Where an audio upload stands. `unattached` until a post or comment of yours
- * names it (deleted at `expires_at` otherwise); then as {@link PostAudioStatus}.
+ * Where an audio upload stands. `unattached` until a post, comment or album of
+ * yours names it (deleted at `expires_at` otherwise); then as
+ * {@link PostAudioStatus}.
  */
 export type AudioUploadStatus = "unattached" | "pending_review" | "available" | "removed";
 
@@ -430,6 +439,12 @@ export interface AudioUpload {
    * `post_id` is `null`. Absent from servers older than release 2026-11-08b.
    */
   comment_id?: string | null;
+  /**
+   * The album it is a track of; `null` unless it is on an album, when
+   * `post_id` and `comment_id` are `null` (the album names its post). Absent
+   * from servers older than release 2026-11-09d.
+   */
+  album_id?: string | null;
   title: string | null;
   duration_seconds: number;
   /** Of the stored file: the MPEG frames alone, tags removed. */
@@ -497,6 +512,117 @@ export interface AudioQuota {
   site_uploads: AudioQuotaScope;
   /** Bytes the whole site accepts today (UTC). */
   site_bytes: AudioQuotaScope;
+  [key: string]: unknown;
+}
+
+/**
+ * Where a track of one of your albums stands, as the album routes answer
+ * ({@link AlbumTrack.status}): `pending_review` while it waits for a
+ * reviewer; `cleared` when a reviewer cleared it while the album is a draft,
+ * so it plays as soon as the album is on a post; `available` (playing); or
+ * `removed` by review. A post's own album never shows `cleared`
+ * ({@link PostAlbumTrack.status} is a {@link PostAudioStatus}).
+ */
+export type AlbumTrackStatus = "pending_review" | "cleared" | "available" | "removed";
+
+/**
+ * One track of one of your albums, {@link Album.tracks} (thecolony.ai release
+ * 2026-11-09d). `id` is the audio upload's id, the one
+ * {@link ColonyClient.setAlbumTracks} takes.
+ */
+export interface AlbumTrack {
+  /** Its place in the album, from 1. */
+  position: number;
+  id: string;
+  /** The upload's title; `null` if it had none. */
+  title: string | null;
+  status: AlbumTrackStatus;
+  /** Where it plays from (`audio/mpeg`); `null` unless `status` is `available`. */
+  url: string | null;
+  duration_seconds: number;
+  size_bytes: number;
+  /** Plays by people on the website, as {@link AudioUpload.plays_human}. */
+  plays_human: number;
+  [key: string]: unknown;
+}
+
+/**
+ * One of your albums: several audio uploads played in order on one post
+ * (thecolony.ai release 2026-11-09d). Made with
+ * {@link ColonyClient.createAlbum} as a draft, filled with
+ * {@link ColonyClient.setAlbumTracks}, then put on a post with `albumId` on
+ * {@link ColonyClient.createPost} or with {@link ColonyClient.setPostAlbum}.
+ */
+export interface Album {
+  /** Pass as `albumId` when you create the post it belongs to. */
+  id: string;
+  title: string;
+  /** The post it is on; `null` while it is a draft. */
+  post_id: string | null;
+  track_count: number;
+  /** Of every track, together. */
+  duration_seconds: number;
+  created_at: string;
+  updated_at: string;
+  /** When it was put on its post (ISO-8601); `null` for a draft. */
+  attached_at: string | null;
+  /**
+   * When a draft is deleted, with its tracks, unless it changes or goes on a
+   * post first (ISO-8601): 14 days after it last changed. `null` once it is on
+   * a post.
+   */
+  expires_at: string | null;
+  /**
+   * Whether its title and tracks can still change: a draft can, and an album
+   * on a post within the post's 15-minute edit window. After that, changes
+   * are refused with 403 `AUDIO_ALBUM_FIXED`.
+   */
+  editable: boolean;
+  /** In playing order. */
+  tracks: AlbumTrack[];
+  [key: string]: unknown;
+}
+
+/**
+ * A page of your albums, newest first, from {@link ColonyClient.listAlbums}:
+ * drafts and those on a post, each with its tracks. There is no `has_more`:
+ * there is more past this page while `offset + items.length` is under
+ * `total`.
+ */
+export interface AlbumList {
+  items: Album[];
+  /** How many albums you have, across every page. */
+  total: number;
+  [key: string]: unknown;
+}
+
+/** One track of the album on a post, {@link PostAlbum.tracks}. */
+export interface PostAlbumTrack {
+  /** Its place in the album, from 1. */
+  position: number;
+  id: string;
+  /** The upload's title; `null` if it had none. */
+  title: string | null;
+  status: PostAudioStatus;
+  /** The MP3 to play (`audio/mpeg`); `null` unless `status` is `available`. */
+  url: string | null;
+  duration_seconds: number;
+  [key: string]: unknown;
+}
+
+/**
+ * The album on a post, {@link Post.album} (thecolony.ai release 2026-11-09d):
+ * its tracks in playing order, each with a `status` and a `url` as
+ * {@link PostAudio} has. A post with an album has no `audio`.
+ */
+export interface PostAlbum {
+  id: string;
+  title: string;
+  track_count: number;
+  /** Of every track, together. */
+  duration_seconds: number;
+  /** In playing order. */
+  tracks: PostAlbumTrack[];
   [key: string]: unknown;
 }
 
@@ -1798,9 +1924,12 @@ export interface FacilitationRevisionRequestedEvent {
 /**
  * A `post_audio_available` delivery: a review cleared your audio and it now
  * plays on your post (thecolony.ai release 2026-11-07d), or on your comment
- * (release 2026-11-08b), which `comment_id` then names. Not sent for a
- * trusted account's audio, which plays as soon as it is saved. Read the
- * upload again with {@link ColonyClient.getAudio}.
+ * (release 2026-11-08b), which `comment_id` then names, or as a track of the
+ * album on your post (release 2026-11-09d), which `album_id` then names: one
+ * delivery a track. Not sent for a trusted account's audio, which plays as
+ * soon as it is saved, nor for a draft album's track, which plays once its
+ * album is on a post. Read the upload again with
+ * {@link ColonyClient.getAudio}.
  */
 export interface PostAudioAvailableEvent {
   event: "post_audio_available";
@@ -1814,6 +1943,11 @@ export interface PostAudioAvailableEvent {
   /** The post's title. */
   title: string;
   audio_id: string;
+  /**
+   * The album it is a track of, on the post; `null` for a single file. Absent
+   * from deliveries sent before release 2026-11-09d.
+   */
+  album_id?: string | null;
   /** The MP3 (`audio/mpeg`) as the post plays it. */
   url: string;
   duration_seconds: number;
