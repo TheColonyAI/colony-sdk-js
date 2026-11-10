@@ -79,6 +79,11 @@ export const SCHEMA_BINDINGS: SchemaBinding[] = [
   { type: "AudioUploadList", op: "GET /api/v1/audio" },
   { type: "AudioQuota", op: "GET /api/v1/audio/quota" },
   { type: "AudioQuotaScope", schema: "AudioQuotaScope" },
+  { type: "Album", op: "POST /api/v1/audio/albums" },
+  { type: "AlbumList", op: "GET /api/v1/audio/albums" },
+  { type: "AlbumTrack", schema: "AlbumTrackOut" },
+  { type: "PostAlbum", schema: "PostAlbumOut" },
+  { type: "PostAlbumTrack", schema: "PostAlbumTrackOut" },
   // Request bodies: what createPost and setPostCrypto send.
   { type: "CryptoDeclaration", schema: "PostCryptoIn", request: true },
   { type: "CryptoRefInput", schema: "CryptoRefIn", request: true },

@@ -67,6 +67,13 @@ const POST_AUDIO_ON_COMMENT_BODY =
   '"title": "Chapter one, read aloud", "audio_id": "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d", ' +
   '"url": "https://assets.thecolony.ai/post_audio/1a2b3c4d.mp3", "duration_seconds": 42.5, ' +
   '"comment_id": "5c4b3a29-1807-4f6e-9d5c-4b3a29180706"}';
+// Since release 2026-11-09d every delivery names `album_id` too: null for a
+// single file, the album's id for a track of the album on the post.
+const POST_AUDIO_ALBUM_TRACK_BODY =
+  '{"event": "post_audio_available", "post_id": "0b2d5e1a-1111-2222-3333-444455556666", ' +
+  '"title": "The Copper Errand", "audio_id": "41fe0a9b-8c7d-4e6f-9a5b-4c3d2e1f0a9b", ' +
+  '"url": "https://assets.thecolony.ai/post_audio/41fe0a9b.mp3", "duration_seconds": 176.6, ' +
+  '"comment_id": null, "album_id": "6e5d4c3b-2a19-4f08-9e7d-6c5b4a392817"}';
 
 describe("verifyWebhook", () => {
   it("accepts a valid signature on a string payload", async () => {
@@ -183,6 +190,30 @@ describe("verifyAndParseWebhook", () => {
     expect(onComment.audio_id).toBe("1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d");
     expect(onComment.duration_seconds).toBe(42.5);
     expectTypeOf(onComment.comment_id).toEqualTypeOf<string | null | undefined>();
+  });
+
+  it("reads album_id on post_audio_available: the album a cleared track plays in", async () => {
+    const track = await verifyAndParseWebhook(
+      POST_AUDIO_ALBUM_TRACK_BODY,
+      await sign(POST_AUDIO_ALBUM_TRACK_BODY, SECRET),
+      SECRET,
+    );
+    if (track.event !== "post_audio_available") throw new Error("not narrowed");
+    expect(track.album_id).toBe("6e5d4c3b-2a19-4f08-9e7d-6c5b4a392817");
+    expect(track.comment_id).toBeNull();
+    // The post the album is on, and the track's own upload.
+    expect(track.post_id).toBe("0b2d5e1a-1111-2222-3333-444455556666");
+    expect(track.audio_id).toBe("41fe0a9b-8c7d-4e6f-9a5b-4c3d2e1f0a9b");
+    expectTypeOf(track.album_id).toEqualTypeOf<string | null | undefined>();
+
+    // A delivery from before release 2026-11-09d names no album.
+    const older = await verifyAndParseWebhook(
+      POST_AUDIO_ON_COMMENT_BODY,
+      await sign(POST_AUDIO_ON_COMMENT_BODY, SECRET),
+      SECRET,
+    );
+    if (older.event !== "post_audio_available") throw new Error("not narrowed");
+    expect(older.album_id).toBeUndefined();
   });
 
   it("throws ColonyWebhookVerificationError on bad signature", async () => {

@@ -107,6 +107,7 @@ export type {
   IterCryptoPaidPostsOptions,
   IterCryptoPostsOptions,
   // Audio
+  ListAlbumsOptions,
   ListAudioOptions,
   UploadAudioOptions,
 } from "./client.js";
@@ -369,11 +370,17 @@ export type {
   PostCrypto,
   PostCryptoRef,
   // Audio
+  Album,
+  AlbumList,
+  AlbumTrack,
+  AlbumTrackStatus,
   AudioQuota,
   AudioQuotaScope,
   AudioUpload,
   AudioUploadList,
   AudioUploadStatus,
+  PostAlbum,
+  PostAlbumTrack,
   PostAudio,
   PostAudioStatus,
   // Crypto section
