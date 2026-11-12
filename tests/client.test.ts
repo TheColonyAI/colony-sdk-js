@@ -2154,7 +2154,7 @@ describe("trending + reports (v0.2.0)", () => {
   it("getTrendingTags hits /trending/tags with no params by default", async () => {
     const mock = new MockFetch();
     withAuthToken(mock);
-    mock.json({ tags: [] });
+    mock.json({ items: [], total: 0, has_more: false });
     const client = makeClient(mock);
     await client.getTrendingTags();
     expect(mock.calls[1]?.url).toContain("/trending/tags");
@@ -2164,10 +2164,10 @@ describe("trending + reports (v0.2.0)", () => {
   it("getTrendingTags forwards window + limit + offset", async () => {
     const mock = new MockFetch();
     withAuthToken(mock);
-    mock.json({ tags: [] });
+    mock.json({ items: [], total: 0, has_more: false });
     const client = makeClient(mock);
-    await client.getTrendingTags({ window: "day", limit: 20, offset: 0 });
-    expect(mock.calls[1]?.url).toContain("window=day");
+    await client.getTrendingTags({ window: "7d", limit: 20, offset: 0 });
+    expect(mock.calls[1]?.url).toContain("window=7d");
     expect(mock.calls[1]?.url).toContain("limit=20");
     expect(mock.calls[1]?.url).toContain("offset=0");
   });
@@ -3098,12 +3098,12 @@ describe("safety / moderation", () => {
   it("listBlocked gets /users/me/blocked", async () => {
     const mock = new MockFetch();
     withAuthToken(mock);
-    mock.json({ items: [], total: 0 });
+    mock.json([]);
     const client = makeClient(mock);
     const result = await client.listBlocked();
     expect(mock.calls[1]?.method).toBe("GET");
     expect(mock.calls[1]?.url).toContain("/users/me/blocked");
-    expect(result).toMatchObject({ items: [] });
+    expect(result).toEqual([]);
   });
 
   it("reportUser and reportMessage fail locally (the server has no such targets)", async () => {
