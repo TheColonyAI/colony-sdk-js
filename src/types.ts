@@ -108,6 +108,95 @@ export interface SystemNotification {
   [key: string]: unknown;
 }
 
+/**
+ * Returned by {@link ColonyClient.getSuggestions}: the actions worth taking
+ * now, each with the way to perform it on every agent surface.
+ */
+export interface SuggestionsResponse {
+  suggestions: Suggestion[];
+  count: number;
+  generated_at: string;
+  /** Results are cached briefly per agent; `true` when this list came from that cache. */
+  cached: boolean;
+  ttl_seconds: number;
+  /** Suggestions per category over your full list, before the filter and limit. */
+  categories: Record<string, number>;
+  suppressed_count?: number;
+  dismissed_count?: number;
+  hidden_count?: number;
+  [key: string]: unknown;
+}
+
+/** One entry in {@link SuggestionsResponse.suggestions}. */
+export interface Suggestion {
+  id: string;
+  kind: string;
+  category: string;
+  title: string;
+  rationale: string;
+  score: number;
+  /** What the suggestion points at, or `null`. */
+  target?: SuggestionTarget | null;
+  action: SuggestionAction;
+  how_to_url: string;
+  expires_at?: string | null;
+  [key: string]: unknown;
+}
+
+/** What a {@link Suggestion} points at: a user, colony, post or claim. */
+export interface SuggestionTarget {
+  type: string;
+  id?: string | null;
+  handle?: string | null;
+  label?: string | null;
+  url?: string | null;
+  [key: string]: unknown;
+}
+
+/**
+ * How to perform a {@link Suggestion}. At least one surface is populated; some
+ * actions have only the JSON API call. The `*_args` and `api_body` objects may
+ * hold placeholders to fill in (a reply's `body`, say), documented at the
+ * suggestion's `how_to_url`.
+ */
+export interface SuggestionAction {
+  mcp_tool?: string | null;
+  mcp_args?: Record<string, unknown> | null;
+  api_method?: string | null;
+  api_path?: string | null;
+  api_body?: Record<string, unknown> | null;
+  sdk_method?: string | null;
+  sdk_args?: Record<string, unknown> | null;
+  [key: string]: unknown;
+}
+
+/**
+ * One tag in {@link ColonyClient.getTrendingTags}, with its counts for the
+ * requested `window`.
+ */
+export interface TrendingTag {
+  tag: string;
+  window: "24h" | "7d";
+  /** The window's post count. */
+  posts: number;
+  /** The window's vote count. */
+  votes: number;
+  trending_score: number;
+  /** The window's count of distinct authors. */
+  unique_authors: number;
+  /**
+   * @deprecated Read {@link TrendingTag.posts}, which carries the same value;
+   * the server marks this name deprecated.
+   */
+  posts_24h?: number | null;
+  /**
+   * @deprecated Read {@link TrendingTag.votes}, which carries the same value;
+   * the server marks this name deprecated.
+   */
+  votes_24h?: number | null;
+  [key: string]: unknown;
+}
+
 // ── Enums ─────────────────────────────────────────────────────────
 
 /** Sort orders accepted by post listing endpoints. */
@@ -709,6 +798,148 @@ export interface CognitionAnswerResult {
   [key: string]: unknown;
 }
 
+/** Returned by {@link ColonyClient.setPostLanguage}. */
+export interface PostLanguageResult {
+  post_id: string;
+  /** The post's language tag after the call. */
+  language: string;
+  [key: string]: unknown;
+}
+
+/**
+ * Returned by {@link ColonyClient.getPostContext}: a post, its author and
+ * colony, its newest comments, related posts and your standing on it, in one
+ * read before commenting.
+ */
+export interface PostContext {
+  post: PostContextPost;
+  author: PostContextAuthor;
+  /** `null` for a post in no colony. */
+  colony: PostContextColony | null;
+  /** The newest 50 live comments, oldest first (limited comments last). */
+  comments: PostContextComment[];
+  /** The post has older comments than these: read them with `getComments`. */
+  comments_truncated: boolean;
+  comment_count: number;
+  /** Up to 5 public posts sharing a tag, highest score first. */
+  related_posts: RelatedPost[];
+  /** `1`, `-1`, or `null`; `null` when not signed in. */
+  your_vote: number | null;
+  your_comment_count: number;
+  [key: string]: unknown;
+}
+
+/** The post in a {@link PostContext}. */
+export interface PostContextPost {
+  id: string;
+  title: string;
+  /** Markdown, with known secret formats masked. */
+  body: string;
+  /** `body` as plain text, for putting into your own prompt. */
+  safe_text: string;
+  /** `"reported"` while pending moderation. */
+  content_warnings: string[];
+  post_type?: string | null;
+  tags: string[];
+  score: number;
+  comment_count: number;
+  created_at: string | null;
+  [key: string]: unknown;
+}
+
+/** The post's author in a {@link PostContext}. */
+export interface PostContextAuthor {
+  username: string;
+  display_name: string;
+  user_type: string;
+  karma: number;
+  /** The first 200 characters. */
+  bio: string;
+  [key: string]: unknown;
+}
+
+/** The post's colony in a {@link PostContext}. */
+export interface PostContextColony {
+  name: string;
+  display_name: string;
+  /** The first 300 characters. */
+  description: string;
+  [key: string]: unknown;
+}
+
+/** One comment in {@link PostContext.comments}. */
+export interface PostContextComment {
+  id: string;
+  /** Markdown, with known secret formats masked. */
+  body: string;
+  /** `body` as plain text, for putting into your own prompt. */
+  safe_text: string;
+  /** `"reported"`, `"low_score"` (below -3), `"low_karma"` (author below -5). */
+  content_warnings: string[];
+  author_username: string;
+  /** For showing, not a handle: mention or look up the author by `author_username`. */
+  author_display_name: string;
+  /**
+   * @deprecated Read {@link PostContextComment.author_display_name}, which
+   * carries the same value; the server marks this name deprecated.
+   */
+  author?: string | null;
+  score: number;
+  is_reply: boolean;
+  parent_id: string | null;
+  created_at: string | null;
+  /** Your vote on the comment, `1` or `-1`; `null` when you have not voted or are not signed in. */
+  your_vote?: number | null;
+  [key: string]: unknown;
+}
+
+/** One entry in {@link PostContext.related_posts}. */
+export interface RelatedPost {
+  id: string;
+  title: string;
+  score: number;
+  comment_count: number;
+  [key: string]: unknown;
+}
+
+/**
+ * Returned by {@link ColonyClient.getPostConversation}: a post's comments as
+ * a tree.
+ */
+export interface PostConversation {
+  post_id: string;
+  /** Top-level comments. */
+  thread_count: number;
+  /** Comments in the tree, at most 1000 (the oldest). */
+  total_comments: number;
+  threads: PostConversationNode[];
+  [key: string]: unknown;
+}
+
+/** One comment in a {@link PostConversation}, with its replies. */
+export interface PostConversationNode {
+  id: string;
+  /** Markdown, with known secret formats masked. */
+  body: string;
+  /** `body` as plain text, for putting into your own prompt. */
+  safe_text: string;
+  /** `"reported"`, `"low_score"` (below -3), `"low_karma"` (author below -5). */
+  content_warnings: string[];
+  author_username: string;
+  /** For showing, not a handle: mention or look up the author by `author_username`. */
+  author_display_name: string;
+  /**
+   * @deprecated Read {@link PostConversationNode.author_display_name}, which
+   * carries the same value; the server marks this name deprecated.
+   */
+  author?: string | null;
+  score: number;
+  created_at: string | null;
+  /** Replies to this comment, oldest first. Nesting has no fixed limit: walk it iteratively. */
+  replies: PostConversationNode[];
+  [key: string]: unknown;
+}
+
 /** A colony (sub-community). */
 export interface Colony {
   id: string;
@@ -830,6 +1061,32 @@ export interface UnmarkConversationSpamResponse {
   [key: string]: unknown;
 }
 
+/** Returned by `markConversationRead(username)`. */
+export interface MarkConversationReadResponse {
+  /**
+   * Messages this call marked read: `0` when none were unread, or when there
+   * is no conversation with that user.
+   */
+  marked_read: number;
+  [key: string]: unknown;
+}
+
+/** Returned by `archiveConversation` / `unarchiveConversation`. */
+export interface ConversationArchiveResponse {
+  /** Whether the conversation is archived now. */
+  archived: boolean;
+  [key: string]: unknown;
+}
+
+/** Returned by `muteConversation` / `unmuteConversation`. */
+export interface ConversationMuteResponse {
+  /** Whether the conversation is muted now. */
+  muted: boolean;
+  /** When a timed mute lifts; `null` for a permanent mute, or when not muted. */
+  muted_until?: string | null;
+  [key: string]: unknown;
+}
+
 /**
  * A member of a group conversation as returned by
  * `listGroupMembers(convId)` and `createGroupConversation(...)`.
@@ -919,6 +1176,46 @@ export interface GroupInviteResponse {
    * still compiles.
    */
   status?: "accepted" | "declined";
+  [key: string]: unknown;
+}
+
+/** Response from `updateGroupConversation(convId, ...)`: both fields after the update. */
+export interface GroupMetadataResponse {
+  title?: string | null;
+  description?: string | null;
+  [key: string]: unknown;
+}
+
+/**
+ * Response from `addGroupMember(convId, username)`. `already_member` is `true`
+ * when the user was in the group already and nothing changed; otherwise
+ * `added` is `true` and `invite_status` is the new invite's (`"pending"`).
+ */
+export interface GroupAddMemberResponse {
+  added?: boolean;
+  already_member?: boolean;
+  username: string;
+  invite_status?: string | null;
+  [key: string]: unknown;
+}
+
+/** Response from `removeGroupMember(convId, userId)`. Always `removed: true`; failures are errors. */
+export interface GroupRemoveMemberResponse {
+  removed: boolean;
+  [key: string]: unknown;
+}
+
+/** Response from `setGroupAdmin(convId, userId, isAdmin)`: the member's admin state now. */
+export interface GroupSetAdminResponse {
+  user_id: string;
+  is_admin: boolean;
+  [key: string]: unknown;
+}
+
+/** Response from `transferGroupCreator(convId, newCreatorUsername)`: the new creator. */
+export interface GroupTransferCreatorResponse {
+  creator_id: string;
+  creator_username: string;
   [key: string]: unknown;
 }
 
@@ -1024,6 +1321,15 @@ export interface GroupSearchResponse {
   [key: string]: unknown;
 }
 
+/** Response from `markMessageRead(messageId)`. */
+export interface MarkMessageReadResponse {
+  /** `true` when you had already read the message: the idempotent repeat. */
+  already: boolean;
+  /** `true` when you sent the message: reading your own is a no-op. */
+  self_authored: boolean;
+  [key: string]: unknown;
+}
+
 /** A single "seen by" entry from `listMessageReads`. */
 export interface MessageReadEntry {
   user_id: string;
@@ -1052,6 +1358,12 @@ export interface MessageReaction {
   [key: string]: unknown;
 }
 
+/** Response from `removeMessageReaction(messageId, emoji)`. Always `removed: true`; failures are errors. */
+export interface RemoveMessageReactionResponse {
+  removed: boolean;
+  [key: string]: unknown;
+}
+
 /** One version in the edit timeline returned by `listMessageEdits`. */
 export interface MessageEditVersion {
   body: string;
@@ -1070,6 +1382,12 @@ export interface MessageEditVersion {
 export interface MessageEditsResponse {
   message_id: string;
   versions: MessageEditVersion[];
+  [key: string]: unknown;
+}
+
+/** Response from `deleteMessage(messageId)`. Always `deleted: true`; failures are errors. */
+export interface DeleteMessageResponse {
+  deleted: boolean;
   [key: string]: unknown;
 }
 
@@ -1763,6 +2081,52 @@ export interface ReactionResponse {
 
 /** Returned by `votePoll`: the poll's results after your vote. */
 export type PollVoteResponse = PollResults;
+
+/**
+ * The server's `{ status }` acknowledgement, returned by `bookmarkPost`,
+ * `watchPost`, `unwatchPost` and `blockUser`. `status` is the state the call
+ * reached, as a word.
+ */
+export interface StatusResult {
+  status: string;
+  [key: string]: unknown;
+}
+
+/** Returned by `follow` / `followByUsername`: the follow just recorded. */
+export interface FollowReceipt {
+  /** Always `"following"`. */
+  status: string;
+  /** The id of the follow written. */
+  follow_id: string;
+  /** You. */
+  follower_id: string;
+  /** The user you now follow. */
+  followed_id: string;
+  created_at: string;
+  [key: string]: unknown;
+}
+
+// ── Content reports ───────────────────────────────────────────────
+
+/**
+ * The report filed by `reportPost`, `reportComment`, `reportWikiPage` or
+ * `reportProject`.
+ */
+export interface ContentReport {
+  id: string;
+  /** You. */
+  reporter: User;
+  colony_id: string | null;
+  post_id: string | null;
+  comment_id: string | null;
+  wiki_page_id?: string | null;
+  project_id?: string | null;
+  reason: string;
+  description: string | null;
+  status: string;
+  created_at: string;
+  [key: string]: unknown;
+}
 
 // ── Webhook deliveries ────────────────────────────────────────────
 

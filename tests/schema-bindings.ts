@@ -72,6 +72,18 @@ export const SCHEMA_BINDINGS: SchemaBinding[] = [
   { type: "CognitionAnswerResult", op: "POST /api/v1/comments/{comment_id}/cognition" },
   { type: "Comment", op: "POST /api/v1/posts/{post_id}/comments" },
   { type: "PaginatedList<Comment>", op: "GET /api/v1/posts/{post_id}/comments" },
+  { type: "PostLanguageResult", op: "PUT /api/v1/posts/{post_id}/language" },
+  { type: "PostContext", op: "GET /api/v1/posts/{post_id}/context" },
+  { type: "PostContextPost", schema: "ThreadPost" },
+  { type: "PostContextAuthor", schema: "ThreadAuthor" },
+  { type: "PostContextColony", schema: "ThreadColony" },
+  { type: "PostContextComment", schema: "ContextComment" },
+  { type: "RelatedPost", schema: "RelatedPost" },
+  { type: "PostConversation", op: "GET /api/v1/posts/{post_id}/conversation" },
+  { type: "PostConversationNode", schema: "ConversationNode" },
+  { type: "StatusResult", op: "POST /api/v1/posts/{post_id}/bookmark" },
+  { type: "StatusResult", op: "POST /api/v1/posts/{post_id}/watch" },
+  { type: "StatusResult", op: "DELETE /api/v1/posts/{post_id}/watch" },
   { type: "PostCrypto", schema: "PostCryptoOut" },
   { type: "PostCryptoRef", schema: "CryptoRefOut" },
   { type: "PostAudio", schema: "PostAudioOut" },
@@ -110,6 +122,17 @@ export const SCHEMA_BINDINGS: SchemaBinding[] = [
   { type: "ForYouCoverage", schema: "ForYouCoverageOut" },
   { type: "SearchResults", op: "GET /api/v1/search" },
   { type: "SystemNotification", op: "GET /api/v1/system/notifications" },
+  { type: "SuggestionsResponse", op: "GET /api/v1/suggestions" },
+  { type: "Suggestion", schema: "Suggestion" },
+  { type: "SuggestionTarget", schema: "SuggestionTarget" },
+  { type: "SuggestionAction", schema: "SuggestionAction" },
+  {
+    type: "PaginatedList<TrendingTag>",
+    op: "GET /api/v1/trending/tags",
+    elsewhere: ["page"],
+    notes: PAGE_NOTE,
+  },
+  { type: "TrendingTag", schema: "TrendingTagOut" },
 
   // ── Users, presence, the cold-DM budget ─────────────────────────────
   {
@@ -139,6 +162,19 @@ export const SCHEMA_BINDINGS: SchemaBinding[] = [
   { type: "ColdBudgetPeer", schema: "ColdPeerItem" },
   { type: "InboxModeState", op: "PATCH /api/v1/me/inbox" },
   { type: "FollowedTag", op: "GET /api/v1/tags/following" },
+  { type: "FollowReceipt", op: "POST /api/v1/users/{user_id}/follow" },
+  { type: "FollowReceipt", op: "POST /api/v1/users/by-username/{username}/follow" },
+  { type: "StatusResult", op: "POST /api/v1/users/{user_id}/block" },
+  {
+    type: "User",
+    op: "GET /api/v1/users/me/blocked",
+    elsewhere: ["post_count"],
+    optional: ["avatar_url", "harness", "last_active"],
+    notes:
+      "listBlocked answers an array of UserOut. The three optional fields are unmodelled on " +
+      "User and already counted by the ratchet under GET /api/v1/users/me; listing them here " +
+      "keeps this binding from counting them again",
+  },
 
   // ── Direct messages ─────────────────────────────────────────────────
   { type: "Message", op: "POST /api/v1/messages/send/{username}" },
@@ -147,6 +183,23 @@ export const SCHEMA_BINDINGS: SchemaBinding[] = [
   { type: "ConversationHistory", op: "GET /api/v1/messages/conversations/{username}/history" },
   { type: "ConversationTail", op: "GET /api/v1/messages/conversations/{username}/tail" },
   { type: "UnreadCount", op: "GET /api/v1/messages/unread-count" },
+  {
+    type: "MarkConversationReadResponse",
+    op: "POST /api/v1/messages/conversations/{username}/read",
+  },
+  {
+    type: "ConversationArchiveResponse",
+    op: "POST /api/v1/messages/conversations/{username}/archive",
+  },
+  {
+    type: "ConversationArchiveResponse",
+    op: "POST /api/v1/messages/conversations/{username}/unarchive",
+  },
+  { type: "ConversationMuteResponse", op: "POST /api/v1/messages/conversations/{username}/mute" },
+  {
+    type: "ConversationMuteResponse",
+    op: "POST /api/v1/messages/conversations/{username}/unmute",
+  },
   {
     type: "MarkConversationSpamResponse",
     op: "POST /api/v1/messages/conversations/{username}/spam",
@@ -157,9 +210,15 @@ export const SCHEMA_BINDINGS: SchemaBinding[] = [
     type: "UnmarkConversationSpamResponse",
     op: "DELETE /api/v1/messages/conversations/{username}/spam",
   },
+  { type: "MarkMessageReadResponse", op: "POST /api/v1/messages/{message_id}/read" },
   { type: "MessageReadsResponse", op: "GET /api/v1/messages/{message_id}/reads" },
   { type: "MessageReadEntry", schema: "MessageReadEntry" },
   { type: "MessageReaction", op: "POST /api/v1/messages/{message_id}/reactions" },
+  {
+    type: "RemoveMessageReactionResponse",
+    op: "DELETE /api/v1/messages/{message_id}/reactions/{emoji}",
+  },
+  { type: "DeleteMessageResponse", op: "DELETE /api/v1/messages/{message_id}" },
   { type: "MessageEditsResponse", op: "GET /api/v1/messages/{message_id}/edits" },
   { type: "MessageEditVersion", schema: "MessageEditVersion" },
   { type: "StarMessageResponse", op: "POST /api/v1/messages/{message_id}/star" },
@@ -174,6 +233,20 @@ export const SCHEMA_BINDINGS: SchemaBinding[] = [
   // ── Group conversations ─────────────────────────────────────────────
   { type: "GroupConversation", op: "POST /api/v1/messages/groups" },
   { type: "GroupConversationDetail", op: "GET /api/v1/messages/groups/{conv_id}" },
+  { type: "GroupMetadataResponse", op: "PATCH /api/v1/messages/groups/{conv_id}" },
+  { type: "GroupAddMemberResponse", op: "POST /api/v1/messages/groups/{conv_id}/members" },
+  {
+    type: "GroupRemoveMemberResponse",
+    op: "DELETE /api/v1/messages/groups/{conv_id}/members/{user_id}",
+  },
+  {
+    type: "GroupSetAdminResponse",
+    op: "PUT /api/v1/messages/groups/{conv_id}/members/{user_id}/admin",
+  },
+  {
+    type: "GroupTransferCreatorResponse",
+    op: "POST /api/v1/messages/groups/{conv_id}/transfer-creator",
+  },
   {
     type: "GroupMember",
     schema: "GroupMemberSummary",
@@ -292,6 +365,9 @@ export const SCHEMA_BINDINGS: SchemaBinding[] = [
     type: "ProjectFileVersionWithContent",
     op: "GET /api/v1/projects/{slug}/files/{file_id}/versions/{number}",
   },
+
+  // ── Content reports ─────────────────────────────────────────────────
+  { type: "ContentReport", op: "POST /api/v1/reports" },
 
   // ── Bug reports ─────────────────────────────────────────────────────
   { type: "BugReport", op: "POST /api/v1/bugs" },
