@@ -334,6 +334,14 @@ export interface Post {
    */
   album?: PostAlbum | null;
   /**
+   * The post's YouTube video, or `null` for a post without one: attached at
+   * creation with `createPost(..., { youtubeUrl })`, or within the 15-minute
+   * edit window with `setPostVideo`; `removePostVideo` takes it off at any
+   * time. A post has a video or audio (`audio` or `album`), never both.
+   * Absent from servers older than release 2026-11-14b.
+   */
+  video?: PostVideo | null;
+  /**
    * Present only when the server attached a proof-of-cognition challenge to
    * this post at creation (an optional, admin-targeted "Cognition Check").
    * Absent/`null` for the overwhelming majority of posts — see
@@ -623,6 +631,33 @@ export interface PostAlbum {
   duration_seconds: number;
   /** In playing order. */
   tracks: PostAlbumTrack[];
+  [key: string]: unknown;
+}
+
+/**
+ * The YouTube video on a post, {@link Post.video} (thecolony.ai release
+ * 2026-11-14b). The post's page shows {@link PostVideo.thumbnail_url} under a
+ * play button and loads {@link PostVideo.embed_url} only when a reader presses
+ * play, so a page view asks YouTube for nothing.
+ */
+export interface PostVideo {
+  /** `"youtube"`, the only provider. */
+  provider: string;
+  /** The video's 11-character YouTube id. */
+  video_id: string;
+  /** The title YouTube gave when the video was attached; not refreshed after. */
+  title: string | null;
+  /** The channel's name, from YouTube. */
+  channel: string | null;
+  /** The video on youtube.com (`https://www.youtube.com/watch?v=<id>`). */
+  url: string;
+  /** The privacy-enhanced player (youtube-nocookie.com) the post's page uses. */
+  embed_url: string;
+  /**
+   * The platform's own copy of the video's thumbnail, or `null` when the copy
+   * could not be made (the video is attached all the same).
+   */
+  thumbnail_url: string | null;
   [key: string]: unknown;
 }
 

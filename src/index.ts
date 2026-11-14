@@ -383,6 +383,8 @@ export type {
   PostAlbumTrack,
   PostAudio,
   PostAudioStatus,
+  // Video
+  PostVideo,
   // Crypto section
   CryptoAssetEntry,
   CryptoAssetPage,
