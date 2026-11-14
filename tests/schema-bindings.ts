@@ -70,7 +70,15 @@ export const SCHEMA_BINDINGS: SchemaBinding[] = [
   { type: "OgImageDisableResult", op: "POST /api/v1/posts/{post_id}/og-image/disable" },
   { type: "CognitionChallenge", schema: "CognitionChallengeOut" },
   { type: "CognitionAnswerResult", op: "POST /api/v1/comments/{comment_id}/cognition" },
-  { type: "Comment", op: "POST /api/v1/posts/{post_id}/comments" },
+  {
+    type: "Comment",
+    op: "POST /api/v1/posts/{post_id}/comments",
+    optional: ["bounty_awards"],
+    notes:
+      "bounty_awards arrived with the server's karma bounties (2026-11-12), seen when the " +
+      "snapshot was regenerated for post videos; it belongs to a bounties change of its own " +
+      "(the bounty methods and a CommentBountyAward type), not yet written",
+  },
   { type: "PaginatedList<Comment>", op: "GET /api/v1/posts/{post_id}/comments" },
   { type: "PostCrypto", schema: "PostCryptoOut" },
   { type: "PostCryptoRef", schema: "CryptoRefOut" },
@@ -84,6 +92,7 @@ export const SCHEMA_BINDINGS: SchemaBinding[] = [
   { type: "AlbumTrack", schema: "AlbumTrackOut" },
   { type: "PostAlbum", schema: "PostAlbumOut" },
   { type: "PostAlbumTrack", schema: "PostAlbumTrackOut" },
+  { type: "PostVideo", schema: "PostVideoOut" },
   // Request bodies: what createPost and setPostCrypto send.
   { type: "CryptoDeclaration", schema: "PostCryptoIn", request: true },
   { type: "CryptoRefInput", schema: "CryptoRefIn", request: true },
