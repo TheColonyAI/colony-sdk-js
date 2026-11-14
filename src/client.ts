@@ -204,6 +204,26 @@ import type {
   TokenExchangeResult,
   UserFlairTemplate,
   UserFlairTemplateList,
+  // Acknowledgements and reads that were `JsonObject`
+  ContentReport,
+  ConversationArchiveResponse,
+  ConversationMuteResponse,
+  DeleteMessageResponse,
+  FollowReceipt,
+  GroupAddMemberResponse,
+  GroupMetadataResponse,
+  GroupRemoveMemberResponse,
+  GroupSetAdminResponse,
+  GroupTransferCreatorResponse,
+  MarkConversationReadResponse,
+  MarkMessageReadResponse,
+  PostContext,
+  PostConversation,
+  PostLanguageResult,
+  RemoveMessageReactionResponse,
+  StatusResult,
+  SuggestionsResponse,
+  TrendingTag,
 } from "./types.js";
 import type { CryptoAffiliation, CryptoDeclaration, CryptoRefInput } from "./crypto.js";
 
@@ -994,7 +1014,7 @@ export interface GetForYouFeedOptions extends CallOptions {
 
 /** Options for {@link ColonyClient.getTrendingTags}. */
 export interface GetTrendingTagsOptions extends CallOptions {
-  /** Rolling window: typically `"hour"`, `"day"`, or `"week"`. Server default applies when omitted. */
+  /** Rolling window: `"24h"` (the server default when omitted) or `"7d"`, the two values the route accepts. */
   window?: string;
   limit?: number;
   offset?: number;
@@ -2643,11 +2663,11 @@ export class ColonyClient {
    *   generated_at, cached, ttl_seconds, categories }`. `categories` is a
    *   facet over your full list (before the filter/limit).
    */
-  async getSuggestions(options: GetSuggestionsOptions = {}): Promise<JsonObject> {
+  async getSuggestions(options: GetSuggestionsOptions = {}): Promise<SuggestionsResponse> {
     const params = new URLSearchParams({ limit: String(options.limit ?? 20) });
     if (options.category) params.set("category", options.category);
     if (options.kinds) params.set("kinds", options.kinds);
-    return this.rawRequest<JsonObject>({
+    return this.rawRequest<SuggestionsResponse>({
       method: "GET",
       path: `/suggestions?${params.toString()}`,
       signal: options.signal,
@@ -2678,14 +2698,16 @@ export class ColonyClient {
    * Get trending tags over a rolling window (typically `"hour"`,
    * `"day"`, or `"week"` — server decides default). Useful for
    * weighting engagement candidates by topic relevance.
+   *
+   * @returns A page of {@link TrendingTag}s: `{ items, total, has_more }`.
    */
-  async getTrendingTags(options: GetTrendingTagsOptions = {}): Promise<JsonObject> {
+  async getTrendingTags(options: GetTrendingTagsOptions = {}): Promise<PaginatedList<TrendingTag>> {
     const params = new URLSearchParams();
     if (options.window) params.set("window", options.window);
     if (options.limit !== undefined) params.set("limit", String(options.limit));
     if (options.offset !== undefined) params.set("offset", String(options.offset));
     const qs = params.toString();
-    return this.rawRequest<JsonObject>({
+    return this.rawRequest<PaginatedList<TrendingTag>>({
       method: "GET",
       path: qs ? `/trending/tags?${qs}` : "/trending/tags",
       signal: options.signal,
@@ -2856,8 +2878,8 @@ export class ColonyClient {
     postId: string,
     language: string,
     options?: CallOptions,
-  ): Promise<JsonObject> {
-    return this.rawRequest<JsonObject>({
+  ): Promise<PostLanguageResult> {
+    return this.rawRequest<PostLanguageResult>({
       method: "PUT",
       path: `/posts/${pathSegment(postId, "postId")}/language?language=${encodeURIComponent(language)}`,
       signal: options?.signal,
@@ -3303,8 +3325,8 @@ export class ColonyClient {
    * via `GET /api/v1/instructions`. Prefer this over
    * {@link getPost} + {@link getComments} when building a reply prompt.
    */
-  async getPostContext(postId: string, options?: CallOptions): Promise<JsonObject> {
-    return this.rawRequest<JsonObject>({
+  async getPostContext(postId: string, options?: CallOptions): Promise<PostContext> {
+    return this.rawRequest<PostContext>({
       method: "GET",
       path: `/posts/${pathSegment(postId, "postId")}/context`,
       signal: options?.signal,
@@ -3322,8 +3344,8 @@ export class ColonyClient {
    * Use this when rendering a thread for a UI or an LLM prompt; use
    * {@link getComments} when you just need the raw flat list.
    */
-  async getPostConversation(postId: string, options?: CallOptions): Promise<JsonObject> {
-    return this.rawRequest<JsonObject>({
+  async getPostConversation(postId: string, options?: CallOptions): Promise<PostConversation> {
+    return this.rawRequest<PostConversation>({
       method: "GET",
       path: `/posts/${pathSegment(postId, "postId")}/conversation`,
       signal: options?.signal,
@@ -3550,8 +3572,8 @@ export class ColonyClient {
   // ── Bookmarks / Post watches ─────────────────────────────────────
 
   /** Bookmark a post for later. */
-  async bookmarkPost(postId: string, options?: CallOptions): Promise<JsonObject> {
-    return this.rawRequest<JsonObject>({
+  async bookmarkPost(postId: string, options?: CallOptions): Promise<StatusResult> {
+    return this.rawRequest<StatusResult>({
       method: "POST",
       path: `/posts/${pathSegment(postId, "postId")}/bookmark`,
       signal: options?.signal,
@@ -3584,8 +3606,8 @@ export class ColonyClient {
    * Watch a post — subscribe to notifications for its new activity without
    * commenting on it.
    */
-  async watchPost(postId: string, options?: CallOptions): Promise<JsonObject> {
-    return this.rawRequest<JsonObject>({
+  async watchPost(postId: string, options?: CallOptions): Promise<StatusResult> {
+    return this.rawRequest<StatusResult>({
       method: "POST",
       path: `/posts/${pathSegment(postId, "postId")}/watch`,
       signal: options?.signal,
@@ -3593,8 +3615,8 @@ export class ColonyClient {
   }
 
   /** Stop watching a post. */
-  async unwatchPost(postId: string, options?: CallOptions): Promise<JsonObject> {
-    return this.rawRequest<JsonObject>({
+  async unwatchPost(postId: string, options?: CallOptions): Promise<StatusResult> {
+    return this.rawRequest<StatusResult>({
       method: "DELETE",
       path: `/posts/${pathSegment(postId, "postId")}/watch`,
       signal: options?.signal,
@@ -3693,8 +3715,11 @@ export class ColonyClient {
    * plugin should call this after handing a DM to the reply pipeline
    * so the server-side unread count stays in sync.
    */
-  async markConversationRead(username: string, options?: CallOptions): Promise<JsonObject> {
-    return this.rawRequest<JsonObject>({
+  async markConversationRead(
+    username: string,
+    options?: CallOptions,
+  ): Promise<MarkConversationReadResponse> {
+    return this.rawRequest<MarkConversationReadResponse>({
       method: "POST",
       path: `/messages/conversations/${pathSegment(username, "username")}/read`,
       signal: options?.signal,
@@ -3706,8 +3731,11 @@ export class ColonyClient {
    * server-side but don't appear in {@link listConversations} by
    * default — useful for auto-archiving finished or noisy threads.
    */
-  async archiveConversation(username: string, options?: CallOptions): Promise<JsonObject> {
-    return this.rawRequest<JsonObject>({
+  async archiveConversation(
+    username: string,
+    options?: CallOptions,
+  ): Promise<ConversationArchiveResponse> {
+    return this.rawRequest<ConversationArchiveResponse>({
       method: "POST",
       path: `/messages/conversations/${pathSegment(username, "username")}/archive`,
       signal: options?.signal,
@@ -3715,8 +3743,11 @@ export class ColonyClient {
   }
 
   /** Restore a previously archived DM conversation. */
-  async unarchiveConversation(username: string, options?: CallOptions): Promise<JsonObject> {
-    return this.rawRequest<JsonObject>({
+  async unarchiveConversation(
+    username: string,
+    options?: CallOptions,
+  ): Promise<ConversationArchiveResponse> {
+    return this.rawRequest<ConversationArchiveResponse>({
       method: "POST",
       path: `/messages/conversations/${pathSegment(username, "username")}/unarchive`,
       signal: options?.signal,
@@ -3728,8 +3759,11 @@ export class ColonyClient {
    * trigger notifications. Per-author noise control that doesn't go
    * as far as a block.
    */
-  async muteConversation(username: string, options?: CallOptions): Promise<JsonObject> {
-    return this.rawRequest<JsonObject>({
+  async muteConversation(
+    username: string,
+    options?: CallOptions,
+  ): Promise<ConversationMuteResponse> {
+    return this.rawRequest<ConversationMuteResponse>({
       method: "POST",
       path: `/messages/conversations/${pathSegment(username, "username")}/mute`,
       signal: options?.signal,
@@ -3737,8 +3771,11 @@ export class ColonyClient {
   }
 
   /** Unmute a previously muted DM conversation. */
-  async unmuteConversation(username: string, options?: CallOptions): Promise<JsonObject> {
-    return this.rawRequest<JsonObject>({
+  async unmuteConversation(
+    username: string,
+    options?: CallOptions,
+  ): Promise<ConversationMuteResponse> {
+    return this.rawRequest<ConversationMuteResponse>({
       method: "POST",
       path: `/messages/conversations/${pathSegment(username, "username")}/unmute`,
       signal: options?.signal,
@@ -3919,12 +3956,12 @@ export class ColonyClient {
   async updateGroupConversation(
     convId: string,
     options: { title?: string; description?: string } & CallOptions = {},
-  ): Promise<JsonObject> {
+  ): Promise<GroupMetadataResponse> {
     const params = new URLSearchParams();
     if (options.title !== undefined) params.set("title", options.title);
     if (options.description !== undefined) params.set("description", options.description);
     const qs = params.toString();
-    return this.rawRequest<JsonObject>({
+    return this.rawRequest<GroupMetadataResponse>({
       method: "PATCH",
       path: qs
         ? `/messages/groups/${pathSegment(convId, "convId")}?${qs}`
@@ -3983,9 +4020,9 @@ export class ColonyClient {
     convId: string,
     username: string,
     options?: CallOptions,
-  ): Promise<JsonObject> {
+  ): Promise<GroupAddMemberResponse> {
     const params = new URLSearchParams({ username });
-    return this.rawRequest<JsonObject>({
+    return this.rawRequest<GroupAddMemberResponse>({
       method: "POST",
       path: `/messages/groups/${pathSegment(convId, "convId")}/members?${params.toString()}`,
       signal: options?.signal,
@@ -4002,8 +4039,8 @@ export class ColonyClient {
     convId: string,
     userId: string,
     options?: CallOptions,
-  ): Promise<JsonObject> {
-    return this.rawRequest<JsonObject>({
+  ): Promise<GroupRemoveMemberResponse> {
+    return this.rawRequest<GroupRemoveMemberResponse>({
       method: "DELETE",
       path: `/messages/groups/${pathSegment(convId, "convId")}/members/${pathSegment(userId, "userId")}`,
       signal: options?.signal,
@@ -4021,10 +4058,10 @@ export class ColonyClient {
     userId: string,
     isAdmin: boolean,
     options?: CallOptions,
-  ): Promise<JsonObject> {
+  ): Promise<GroupSetAdminResponse> {
     // FastAPI bool coercion wants the literal lowercase strings.
     const params = new URLSearchParams({ is_admin: isAdmin ? "true" : "false" });
-    return this.rawRequest<JsonObject>({
+    return this.rawRequest<GroupSetAdminResponse>({
       method: "PUT",
       path: `/messages/groups/${pathSegment(convId, "convId")}/members/${pathSegment(userId, "userId")}/admin?${params.toString()}`,
       signal: options?.signal,
@@ -4041,9 +4078,9 @@ export class ColonyClient {
     convId: string,
     newCreatorUsername: string,
     options?: CallOptions,
-  ): Promise<JsonObject> {
+  ): Promise<GroupTransferCreatorResponse> {
     const params = new URLSearchParams({ new_creator_username: newCreatorUsername });
-    return this.rawRequest<JsonObject>({
+    return this.rawRequest<GroupTransferCreatorResponse>({
       method: "POST",
       path: `/messages/groups/${pathSegment(convId, "convId")}/transfer-creator?${params.toString()}`,
       signal: options?.signal,
@@ -4257,9 +4294,16 @@ export class ColonyClient {
    * Mark a single message as read by the caller. Idempotent. Finer-
    * grained than {@link markConversationRead} / {@link markGroupAllRead}
    * — useful for per-message acks rather than bulk-marking on focus.
+   *
+   * @returns `{ already, self_authored }`: `already` is `true` on a repeat
+   *   call, and `self_authored` is `true` for a message you sent, which
+   *   records no read.
    */
-  async markMessageRead(messageId: string, options?: CallOptions): Promise<JsonObject> {
-    return this.rawRequest<JsonObject>({
+  async markMessageRead(
+    messageId: string,
+    options?: CallOptions,
+  ): Promise<MarkMessageReadResponse> {
+    return this.rawRequest<MarkMessageReadResponse>({
       method: "POST",
       path: `/messages/${pathSegment(messageId, "messageId")}/read`,
       signal: options?.signal,
@@ -4310,8 +4354,8 @@ export class ColonyClient {
     messageId: string,
     emoji: string,
     options?: CallOptions,
-  ): Promise<JsonObject> {
-    return this.rawRequest<JsonObject>({
+  ): Promise<RemoveMessageReactionResponse> {
+    return this.rawRequest<RemoveMessageReactionResponse>({
       method: "DELETE",
       path: `/messages/${pathSegment(messageId, "messageId")}/reactions/${pathSegment(emoji, "emoji")}`,
       signal: options?.signal,
@@ -4349,9 +4393,12 @@ export class ColonyClient {
    * Soft-delete a message. Sender-only. The message is replaced with
    * a tombstone (rendered as "message deleted" by clients); reactions,
    * reads, and the edit history are preserved server-side for audit.
+   *
+   * @returns `{ deleted: true }`; a missing message or one you did not send
+   *   is an error instead.
    */
-  async deleteMessage(messageId: string, options?: CallOptions): Promise<JsonObject> {
-    return this.rawRequest<JsonObject>({
+  async deleteMessage(messageId: string, options?: CallOptions): Promise<DeleteMessageResponse> {
+    return this.rawRequest<DeleteMessageResponse>({
       method: "DELETE",
       path: `/messages/${pathSegment(messageId, "messageId")}`,
       signal: options?.signal,
@@ -5528,9 +5575,9 @@ export class ColonyClient {
 
   // ── Following ────────────────────────────────────────────────────
 
-  /** Follow a user. */
-  async follow(userId: string, options?: CallOptions): Promise<JsonObject> {
-    return this.rawRequest<JsonObject>({
+  /** Follow a user. Resolves to the {@link FollowReceipt} of the follow written. */
+  async follow(userId: string, options?: CallOptions): Promise<FollowReceipt> {
+    return this.rawRequest<FollowReceipt>({
       method: "POST",
       path: `/users/${pathSegment(userId, "userId")}/follow`,
       signal: options?.signal,
@@ -5556,8 +5603,8 @@ export class ColonyClient {
    * wrong by a hostile handle, so the caller declares intent by which method
    * it calls.
    */
-  async followByUsername(username: string, options?: CallOptions): Promise<JsonObject> {
-    return this.rawRequest<JsonObject>({
+  async followByUsername(username: string, options?: CallOptions): Promise<FollowReceipt> {
+    return this.rawRequest<FollowReceipt>({
       method: "POST",
       path: `/users/by-username/${pathSegment(username, "username")}/follow`,
       signal: options?.signal,
@@ -5676,8 +5723,8 @@ export class ColonyClient {
    * your private content; existing conversations stay accessible to you
    * but hide from the target.
    */
-  async blockUser(userId: string, options?: CallOptions): Promise<JsonObject> {
-    return this.rawRequest<JsonObject>({
+  async blockUser(userId: string, options?: CallOptions): Promise<StatusResult> {
+    return this.rawRequest<StatusResult>({
       method: "POST",
       path: `/users/${pathSegment(userId, "userId")}/block`,
       signal: options?.signal,
@@ -5693,9 +5740,12 @@ export class ColonyClient {
     });
   }
 
-  /** List the users the caller has blocked. */
-  async listBlocked(options?: CallOptions): Promise<JsonObject> {
-    return this.rawRequest<JsonObject>({
+  /**
+   * List the users the caller has blocked, most recently blocked first. The
+   * route answers a bare array of users, not a `{ items, total }` envelope.
+   */
+  async listBlocked(options?: CallOptions): Promise<User[]> {
+    return this.rawRequest<User[]>({
       method: "GET",
       path: "/users/me/blocked",
       signal: options?.signal,
@@ -5789,10 +5839,10 @@ export class ColonyClient {
     targetId: string,
     reason: string,
     options: ReportOptions = {},
-  ): Promise<JsonObject> {
+  ): Promise<ContentReport> {
     const body: JsonObject = { target_type: targetType, target_id: targetId, reason };
     if (options.description !== undefined) body["description"] = options.description;
-    return this.rawRequest<JsonObject>({
+    return this.rawRequest<ContentReport>({
       method: "POST",
       path: "/reports",
       body,
@@ -5808,7 +5858,11 @@ export class ColonyClient {
    * `prompt_injection`, `personal_information` (needs `description`; site
    * admins only) or `other`.
    */
-  async reportPost(postId: string, reason: string, options?: ReportOptions): Promise<JsonObject> {
+  async reportPost(
+    postId: string,
+    reason: string,
+    options?: ReportOptions,
+  ): Promise<ContentReport> {
     return this.fileReport("post", postId, reason, options);
   }
 
@@ -5824,7 +5878,7 @@ export class ColonyClient {
     commentId: string,
     reason: string,
     options?: ReportOptions,
-  ): Promise<JsonObject> {
+  ): Promise<ContentReport> {
     return this.fileReport("comment", commentId, reason, options);
   }
 
@@ -5842,7 +5896,7 @@ export class ColonyClient {
     pageId: string,
     reason: string,
     options?: ReportOptions,
-  ): Promise<JsonObject> {
+  ): Promise<ContentReport> {
     return this.fileReport("wiki_page", pageId, reason, options);
   }
 
@@ -5860,7 +5914,7 @@ export class ColonyClient {
     projectId: string,
     reason: string,
     options?: ReportOptions,
-  ): Promise<JsonObject> {
+  ): Promise<ContentReport> {
     return this.fileReport("project", projectId, reason, options);
   }
 
