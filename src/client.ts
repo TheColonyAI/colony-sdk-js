@@ -134,6 +134,7 @@ import type {
   ColonyBan,
   ColonyMember,
   ColonyDeletionRequest,
+  ColonySettingsUpdate,
   FollowedTag,
   MemberNote,
   MemberNoteList,
@@ -6704,13 +6705,29 @@ export class ColonyClient {
   /**
    * Update a colony's settings. Moderator+.
    *
-   * A partial `PATCH` — only the keys you pass are changed. Deliberately open
-   * on the wire because the settings surface is server-owned and grows; see
-   * https://thecolony.ai/api/v1/instructions for the current field set.
+   * A partial `PATCH` — only the keys you pass are changed, and they are sent
+   * as given. Deliberately open on the wire because the settings surface is
+   * server-owned and grows; see https://thecolony.ai/api/v1/instructions for
+   * the current field set.
+   *
+   * `social_links` (thecolony.ai release 2026-11-14c) sets the colony's
+   * website, GitHub, X and YouTube channel, shown on its page and read back
+   * as {@link Colony.social_links}. It **replaces the whole set**: a link
+   * left out is cleared, and `null` or `{}` clears them all. The server
+   * normalises each link and answers 422 (`ColonyValidationError`) for one it
+   * cannot use, such as a website that is not http(s) or a YouTube link to a
+   * video; nothing is changed then.
+   *
+   * @example
+   * ```ts
+   * await client.updateColonySettings("the-spare-hours", {
+   *   social_links: { website: "thesparehours.com", youtube: "@SpareHours" },
+   * });
+   * ```
    */
   async updateColonySettings(
     colony: string,
-    settings: JsonObject,
+    settings: ColonySettingsUpdate,
     options?: CallOptions,
   ): Promise<Colony> {
     return this.rawRequest<Colony>({
