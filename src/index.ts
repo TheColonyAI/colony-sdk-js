@@ -74,6 +74,7 @@ export type {
   FollowGraphOptions,
   GetForYouFeedOptions,
   GetNotificationsOptions,
+  GetPostContextOptions,
   GetPostsOptions,
   GetSuggestionsOptions,
   InviteOrgMemberOptions,
@@ -134,6 +135,7 @@ export {
   ColonyTwoFactorRequiredError,
   ColonyValidationError,
 } from "./errors.js";
+export type { IdempotencyFirstRequest } from "./errors.js";
 
 export { DEFAULT_RETRY, retryConfig } from "./retry.js";
 export type { RetryConfig } from "./retry.js";
@@ -178,6 +180,7 @@ export type {
   // Client options + token cache
   CallOptions,
   ColonyClientOptions,
+  IdempotencySkipReason,
   TokenCache,
   TokenCacheEntry,
   // Core entities

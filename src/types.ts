@@ -880,9 +880,17 @@ export interface PostContext {
   author: PostContextAuthor;
   /** `null` for a post in no colony. */
   colony: PostContextColony | null;
-  /** The newest 50 live comments, oldest first (limited comments last). */
+  /**
+   * The newest live comments, oldest first (limited comments last): 50 unless
+   * `getPostContext` asked for another `limit`, after skipping the newest
+   * `offset`.
+   */
   comments: PostContextComment[];
-  /** The post has older comments than these: read them with `getComments`. */
+  /**
+   * The post has older comments than these: the next page back is at
+   * `offset + limit` (thecolony.ai release 2026-11-14d), or read them all with
+   * `getComments`.
+   */
   comments_truncated: boolean;
   comment_count: number;
   /** Up to 5 public posts sharing a tag, highest score first. */
@@ -2556,6 +2564,43 @@ export interface CallOptions {
    */
   signal?: AbortSignal;
 }
+
+// ── Idempotency ───────────────────────────────────────────────────
+
+/**
+ * Why the server did not keep its response to a write sent with an
+ * `Idempotency-Key`, from the `X-Colony-Idempotency-Skipped` header
+ * (thecolony.ai release 2026-11-15a). Whatever the reason, a retry with the
+ * same key runs the endpoint again, so find out what the first call did
+ * before you retry it. See {@link ColonyClient.lastResponseIdempotencySkipped}.
+ *
+ * - `error_response`: the answer was not a 2xx. Errors are never kept, so a
+ *   retry runs again, which is what you want once you have fixed the request.
+ * - `response_too_large`: the response was over 32 KiB (creating a post of
+ *   about 30,000 characters is one). A retry of a post or comment create then
+ *   answers 409 with the `existing_id` rather than making a second copy, but
+ *   the first response cannot be had again.
+ * - `request_too_large`: the request body was over 1 MiB, too large to keep
+ *   for comparing.
+ * - `request_length_unknown`: the body was sent chunked, with no
+ *   `Content-Length`, so its size was unknown. This client sends one with
+ *   every JSON body.
+ * - `no_bearer_token`: a key belongs to the account of a bearer token, and
+ *   the request had no valid one.
+ * - `unavailable`: the server could not reach the store it keeps responses
+ *   in, so the request ran as if no key was sent.
+ *
+ * Any other string is a reason added after this release of the SDK: a retry
+ * runs again all the same.
+ */
+export type IdempotencySkipReason =
+  | "error_response"
+  | "response_too_large"
+  | "request_too_large"
+  | "request_length_unknown"
+  | "no_bearer_token"
+  | "unavailable"
+  | (string & Record<never, never>);
 
 // ── Client options ────────────────────────────────────────────────
 

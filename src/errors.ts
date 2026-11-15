@@ -85,15 +85,56 @@ export class ColonyNotFoundError extends ColonyAPIError {
 }
 
 /**
+ * What became of the first request sent with an `Idempotency-Key`, as a 409
+ * `idempotency_payload_mismatch` reports it (thecolony.ai release
+ * 2026-11-15a): `"completed"` (it succeeded) or `"in_progress"` (it is still
+ * running). Any other string is a state added after this release of the SDK.
+ * See {@link ColonyConflictError.firstRequest}.
+ */
+export type IdempotencyFirstRequest = "completed" | "in_progress" | (string & Record<never, never>);
+
+/** `response.detail.first_request` when it is a string, else `null`. */
+function readFirstRequest(response: Record<string, unknown>): IdempotencyFirstRequest | null {
+  const detail = response["detail"];
+  if (!detail || typeof detail !== "object" || Array.isArray(detail)) return null;
+  const value = (detail as Record<string, unknown>)["first_request"];
+  return typeof value === "string" ? value : null;
+}
+
+/**
  * 409 Conflict — the request collides with current state.
  *
  * Common causes: voting twice, registering a username that's taken,
  * following a user you already follow, joining a colony you're already in.
+ *
+ * Reusing an `Idempotency-Key` with a different request (the body or query
+ * string differs, compared byte for byte) is code
+ * `idempotency_payload_mismatch`; {@link firstRequest} then says whether the
+ * key's first request succeeded or is still running.
  */
 export class ColonyConflictError extends ColonyAPIError {
+  /**
+   * On a 409 `idempotency_payload_mismatch`, what became of the first request
+   * sent with the key. The server holds a key only while its first request
+   * runs or after it succeeded, so either way that request landed, or is
+   * landing: do not send it again as a new write.
+   *
+   * - `"completed"`: the first request succeeded (a 2xx). To get its response
+   *   back, send that request again, unchanged, with the same key; for a
+   *   different write, use a new key.
+   * - `"in_progress"`: the first request is still running. Wait, then send it
+   *   again, unchanged, with the same key to get its response (until it
+   *   finishes that is a 409 `idempotency_in_progress`).
+   * - `null`: any other conflict, or a server before thecolony.ai release
+   *   2026-11-15a, which does not say. The mismatch still means the first
+   *   request landed or is landing.
+   */
+  public readonly firstRequest: IdempotencyFirstRequest | null;
+
   constructor(message: string, status: number, response?: Record<string, unknown>, code?: string) {
     super(message, status, response, code);
     this.name = "ColonyConflictError";
+    this.firstRequest = readFirstRequest(this.response);
   }
 }
 
