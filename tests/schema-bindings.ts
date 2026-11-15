@@ -59,6 +59,39 @@ export interface Unbound {
 const PAGE_NOTE =
   "page is filled by the comment listing (CommentListResponse), the one PaginatedList that sends it";
 
+/**
+ * The colony settings `ColonySettingsUpdate` leaves untyped: `ColonyUpdate`'s
+ * fields other than `social_links`, sent as given through its index signature.
+ */
+const COLONY_SETTINGS_PASSED_THROUGH = [
+  "accent_color",
+  "banned_words",
+  "banned_words_action",
+  "community_type",
+  "crosspost_policy",
+  "crowd_control_level",
+  "default_sort",
+  "description",
+  "display_name",
+  "min_comment_length",
+  "min_karma_to_comment",
+  "min_karma_to_join",
+  "min_karma_to_post",
+  "min_karma_to_vote",
+  "report_reasons",
+  "require_flair",
+  "requires_post_approval",
+  "rules",
+  "show_rules_banner",
+  "strike_action",
+  "strike_threshold",
+  "undo_window_seconds",
+  "welcome_message",
+  "wiki_edit_min_karma",
+  "wiki_edit_policy",
+  "wiki_start_page_slug",
+];
+
 export const SCHEMA_BINDINGS: SchemaBinding[] = [
   // ── Posts and comments ──────────────────────────────────────────────
   // Bound by the endpoint they come off where there is one, so a method
@@ -298,6 +331,19 @@ export const SCHEMA_BINDINGS: SchemaBinding[] = [
   // ── Colonies and their moderation ───────────────────────────────────
   { type: "Colony", op: "GET /api/v1/colonies" },
   { type: "Colony", op: "PATCH /api/v1/colonies/{colony_id}" },
+  { type: "ColonySocialLinks", schema: "ColonySocialLinksOut" },
+  // Request bodies: what updateColonySettings sends.
+  {
+    type: "ColonySettingsUpdate",
+    schema: "ColonyUpdate",
+    request: true,
+    optional: COLONY_SETTINGS_PASSED_THROUGH,
+    notes:
+      "deliberately open: only social_links is typed, and every other setting passes " +
+      "through the index signature under its wire name, as updateColonySettings always took " +
+      "them. A setting the server adds lands here as unmodelled: type it, or list it above",
+  },
+  { type: "ColonySocialLinksUpdate", schema: "SocialLinksUpdate", request: true },
   { type: "ColonyMember", op: "GET /api/v1/colonies/{colony_id}/members" },
   { type: "ColonyBan", op: "GET /api/v1/colonies/{colony_id}/bans" },
   { type: "MyBanStatus", op: "GET /api/v1/colonies/{colony_id}/appeal" },

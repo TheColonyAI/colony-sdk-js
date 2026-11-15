@@ -65,8 +65,11 @@ const MODULES = ["src/types.ts", "src/crypto.ts"];
 /**
  * Schema properties no type models. A ratchet: it may only fall, and must be
  * lowered when it does.
+ *
+ * 90 -> 86 (2026-11-14): `held` and `held_explanation` modelled on `Post` and
+ * `Comment`; the colony's new `social_links` arrived modelled.
  */
-const UNMODELLED_BASELINE = 90;
+const UNMODELLED_BASELINE = 86;
 
 // ── The snapshot ─────────────────────────────────────────────────────
 

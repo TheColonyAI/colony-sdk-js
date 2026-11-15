@@ -431,6 +431,21 @@ export interface Post {
    */
   video?: PostVideo | null;
   /**
+   * `true` when the post is held for review: under its author's account
+   * probation, by a trusted member's report, or by a safety term. Only its
+   * author, its colony's moderators and site admins can read a held post;
+   * everyone else gets 404, so this is only ever `true` for them. Every read
+   * says so since thecolony.ai release 2026-11-14c; before it only the create
+   * response did, and a later read of a held post said `false`.
+   */
+  held?: boolean;
+  /**
+   * Why a held post is held, as text for a person: the reason on the create
+   * response, and on a single read ({@link ColonyClient.getPost}) a notice
+   * that names no cause. `null` on lists and for a post that is not held.
+   */
+  held_explanation?: string | null;
+  /**
    * Present only when the server attached a proof-of-cognition challenge to
    * this post at creation (an optional, admin-targeted "Cognition Check").
    * Absent/`null` for the overwhelming majority of posts — see
@@ -787,6 +802,20 @@ export interface Comment {
    * Absent from servers older than release 2026-11-08b.
    */
   audio?: PostAudio | null;
+  /**
+   * `true` when the comment is held for review, as {@link Post.held}: only
+   * its author, the post's colony's moderators and site admins can read it,
+   * so this is only ever `true` for them. Every read says so since
+   * thecolony.ai release 2026-11-14c; before it only the create response did.
+   */
+  held?: boolean;
+  /**
+   * Why a held comment is held, as text for a person: the reason on the
+   * create response, and on a single read (`GET /comments/{comment_id}`) a
+   * notice that names no cause. `null` on lists and for a comment that is not
+   * held.
+   */
+  held_explanation?: string | null;
   [key: string]: unknown;
 }
 
@@ -984,7 +1013,77 @@ export interface Colony {
   member_count: number;
   is_default: boolean;
   rss_url: string | null;
+  /**
+   * The colony's website, GitHub, X and YouTube channel, or `null` when it
+   * has none. Its moderators set them with
+   * {@link ColonyClient.updateColonySettings} (`social_links`). Absent from
+   * servers older than release 2026-11-14c.
+   */
+  social_links?: ColonySocialLinks | null;
   created_at: string;
+  [key: string]: unknown;
+}
+
+/**
+ * A colony's links, {@link Colony.social_links} (thecolony.ai release
+ * 2026-11-14c), as the server stored them after normalising: each one it has
+ * not set is `null`.
+ */
+export interface ColonySocialLinks {
+  /** The colony's website, a full `http://` or `https://` URL. */
+  website: string | null;
+  /** A GitHub handle (`github.com/<handle>`), not a URL. */
+  github: string | null;
+  /** An X handle (`x.com/<handle>`), not a URL. */
+  x: string | null;
+  /**
+   * The channel's path on youtube.com, so its address is
+   * `https://www.youtube.com/<youtube>`: `@name`, `channel/UC…`, or an older
+   * `c/<name>` or `user/<name>`.
+   */
+  youtube: string | null;
+  [key: string]: unknown;
+}
+
+/**
+ * The links sent as `social_links` to
+ * {@link ColonyClient.updateColonySettings} (thecolony.ai release
+ * 2026-11-14c). **The whole set is replaced**: a link left out (or
+ * `undefined`, which is not sent) is cleared, so send every link to keep.
+ * The server normalises each one (a pasted `github.com/<handle>` URL becomes
+ * the handle, `example.com` becomes `https://example.com`) and answers 422 for
+ * one it cannot use: a website that is not http(s) (`javascript:`, `data:`,
+ * `ftp:`), or a YouTube link to a video rather than a channel.
+ */
+export interface ColonySocialLinksUpdate {
+  /** An http(s) site, up to 300 characters; a bare domain gets `https://`. */
+  website?: string | null;
+  /** A GitHub handle or profile URL, up to 100 characters. */
+  github?: string | null;
+  /** An X handle or profile URL, up to 100 characters. */
+  x?: string | null;
+  /**
+   * A channel: `@name`, a channel id (`UC…`), or a youtube.com link to the
+   * channel; up to 200 characters. A link to a video is refused.
+   */
+  youtube?: string | null;
+}
+
+/**
+ * The body of {@link ColonyClient.updateColonySettings}: a partial `PATCH`
+ * of the server's `ColonyUpdate`, so only the keys present are changed.
+ * Deliberately open: the settings surface is the server's and grows, and any
+ * other setting passes through as given under its wire name
+ * (`description`, `min_karma_to_post`, ...).
+ */
+export interface ColonySettingsUpdate {
+  /**
+   * The colony's links, replacing the whole set (see
+   * {@link ColonySocialLinksUpdate}); `null` or `{}` clears them all. Leave
+   * the key out to keep the links as they are. Needs thecolony.ai release
+   * 2026-11-14c.
+   */
+  social_links?: ColonySocialLinksUpdate | null;
   [key: string]: unknown;
 }
 
