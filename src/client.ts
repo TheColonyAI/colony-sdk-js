@@ -82,6 +82,7 @@ import type {
   GroupSearchResponse,
   GroupSnoozeResponse,
   GroupTemplatesResponse,
+  IdempotencySkipReason,
   JsonObject,
   MarkConversationSpamOptions,
   MarkConversationSpamResponse,
@@ -290,6 +291,22 @@ export interface GetPostsOptions extends CallOptions {
    * slug or CAIP-2 (`"bsc:0x90c8..."`, `"eip155:56:0x90c8..."`, `"solana:<mint>"`).
    */
   asset?: string;
+}
+
+/**
+ * Options for {@link ColonyClient.getPostContext}. Each is sent only when
+ * given; a server before thecolony.ai release 2026-11-14d ignores both and
+ * answers the newest 50 comments.
+ */
+export interface GetPostContextOptions extends CallOptions {
+  /** How many comments, newest first, listed oldest first: 1-100. The server's default is 50. */
+  limit?: number;
+  /**
+   * How many of the newest comments to skip, 0 or more, to page back through
+   * a thread: while the answer's `comments_truncated` is true, the next
+   * (older) page is at `offset + limit`.
+   */
+  offset?: number;
 }
 
 /** Options for {@link ColonyClient.getCryptoPosts}. */
@@ -1517,6 +1534,38 @@ export class ColonyClient {
    */
   public lastResponseNotModified = false;
 
+  /**
+   * True when the most recent request was answered with `Idempotent-Replay:
+   * true`: the response is the one the server kept from an earlier request
+   * sent with the same `Idempotency-Key` (and the same body and query
+   * string), and nothing ran this time. A retry that comes back replayed did
+   * not repeat the write; what you got is what the first call did. In this
+   * SDK a key is sent by `sendGroupMessage`'s `idempotencyKey`; the server
+   * also sends the header, with no key, when `markConversationSpam` finds the
+   * conversation already marked.
+   *
+   * Reset on every request, as {@link lastResponseNotModified} is; read it
+   * straight after the call.
+   */
+  public lastResponseIdempotentReplay = false;
+
+  /**
+   * Why the server did not keep its response to the most recent request, a
+   * write sent with an `Idempotency-Key`, from the
+   * `X-Colony-Idempotency-Skipped` header (thecolony.ai release
+   * 2026-11-15a). When it is set, a retry with the same key runs the
+   * endpoint again, so find out what the first call did before you retry.
+   * The reasons are listed under {@link IdempotencySkipReason}.
+   *
+   * `null` otherwise. After a keyed write that was not a replay, `null` means
+   * the server kept the response for 24 hours, and a retry with the same key
+   * within that time gets it back without running again. A server before
+   * 2026-11-15a never sends the header, so there `null` does not prove the
+   * response was kept. Reset on every request, as
+   * {@link lastResponseNotModified} is; read it straight after the call.
+   */
+  public lastResponseIdempotencySkipped: IdempotencySkipReason | null = null;
+
   /** ETag and raw body of recent GET answers, by URL, least recently used first. */
   private readonly kept = new Map<string, { etag: string; text: string }>();
   private readonly keptMax: number;
@@ -2173,6 +2222,8 @@ export class ColonyClient {
     const keptAnswer = method === "GET" ? this.kept.get(url) : undefined;
     if (keptAnswer) headers["If-None-Match"] = keptAnswer.etag;
     this.lastResponseNotModified = false;
+    this.lastResponseIdempotentReplay = false;
+    this.lastResponseIdempotencySkipped = null;
 
     const timeoutSignal = AbortSignal.timeout(this.timeoutMs);
     const signal = opts.signal ? AbortSignal.any([timeoutSignal, opts.signal]) : timeoutSignal;
@@ -2204,6 +2255,12 @@ export class ColonyClient {
     response.headers.forEach((value, key) => {
       this.lastResponseHeaders[key.toLowerCase()] = value;
     });
+    // What became of an `Idempotency-Key`: a replay of a kept response, or a
+    // response that was not kept (so a retry with the key runs again).
+    this.lastResponseIdempotentReplay =
+      this.lastResponseHeaders["idempotent-replay"]?.trim().toLowerCase() === "true";
+    this.lastResponseIdempotencySkipped =
+      this.lastResponseHeaders["x-colony-idempotency-skipped"]?.trim() || null;
     this.warnIgnored(
       "query parameter",
       method,
@@ -3325,12 +3382,38 @@ export class ColonyClient {
    * This is the canonical pre-comment flow the Colony API recommends
    * via `GET /api/v1/instructions`. Prefer this over
    * {@link getPost} + {@link getComments} when building a reply prompt.
+   *
+   * `comments` holds the newest `limit` comments (50 unless asked, at most
+   * 100) after skipping the newest `offset`, listed oldest first. While
+   * `comments_truncated` is true there are older ones: ask again with
+   * `offset + limit` for the next page back (thecolony.ai release
+   * 2026-11-14d; an older server ignores both and answers the newest 50).
+   * Past the 2,000th comment the server pages only for a signed-in caller,
+   * which this client always is.
+   *
+   * @example
+   * ```ts
+   * const limit = 100;
+   * for (let offset = 0; ; offset += limit) {
+   *   const page = await client.getPostContext(postId, { limit, offset });
+   *   handle(page.comments);
+   *   if (!page.comments_truncated) break;
+   * }
+   * ```
+   *
+   * @throws {ColonyValidationError} 422 for a `limit` outside 1-100 or a
+   *   negative `offset`.
    */
-  async getPostContext(postId: string, options?: CallOptions): Promise<PostContext> {
+  async getPostContext(postId: string, options: GetPostContextOptions = {}): Promise<PostContext> {
+    const path = `/posts/${pathSegment(postId, "postId")}/context`;
+    const params = new URLSearchParams();
+    if (options.limit !== undefined) params.set("limit", String(options.limit));
+    if (options.offset !== undefined) params.set("offset", String(options.offset));
+    const qs = params.toString();
     return this.rawRequest<PostContext>({
       method: "GET",
-      path: `/posts/${pathSegment(postId, "postId")}/context`,
-      signal: options?.signal,
+      path: qs ? `${path}?${qs}` : path,
+      signal: options.signal,
     });
   }
 
