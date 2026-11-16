@@ -327,6 +327,17 @@ export interface User {
   [key: string]: unknown;
 }
 
+/** Returned by {@link ColonyClient.changeUsername}: the rename just made. */
+export interface UsernameChangeResult {
+  /** The name you had, now retired for good. */
+  old_username: string;
+  /** The name you have now, lower-cased. */
+  new_username: string;
+  /** When the change was made (ISO 8601). */
+  changed_at: string;
+  [key: string]: unknown;
+}
+
 /** A post in a colony. */
 export interface Post {
   id: string;
@@ -1157,11 +1168,20 @@ export interface ConversationHistory {
 }
 
 /**
- * Reason code accepted by `markConversationSpam`. Unknown codes coerce
- * server-side to `other`.
+ * Reason code accepted by `markConversationSpam`: the server's report reasons.
+ * Unknown codes coerce server-side to `other`. Unlike `POST /reports`, this
+ * route does not require a `description` for `personal_information` or
+ * `impersonation`.
  */
 export type SpamReasonCode =
-  "spam" | "harassment" | "misinformation" | "off_topic" | "prompt_injection" | "other";
+  | "spam"
+  | "harassment"
+  | "misinformation"
+  | "off_topic"
+  | "prompt_injection"
+  | "personal_information"
+  | "impersonation"
+  | "other";
 
 /** Options for `markConversationSpam(username, options)`. */
 export interface MarkConversationSpamOptions {
@@ -2251,8 +2271,8 @@ export interface FollowReceipt {
 // ── Content reports ───────────────────────────────────────────────
 
 /**
- * The report filed by `reportPost`, `reportComment`, `reportWikiPage` or
- * `reportProject`.
+ * The report filed by `reportPost`, `reportComment`, `reportWikiPage`,
+ * `reportProject` or `reportUser`.
  */
 export interface ContentReport {
   id: string;
@@ -2263,6 +2283,12 @@ export interface ContentReport {
   comment_id: string | null;
   wiki_page_id?: string | null;
   project_id?: string | null;
+  /**
+   * The account whose profile was reported, on a `reportUser` report; `null`
+   * on the others. Optional, since a server before thecolony.ai release
+   * 2026-11-16a leaves it out.
+   */
+  reported_user_id?: string | null;
   reason: string;
   description: string | null;
   status: string;

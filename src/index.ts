@@ -347,6 +347,7 @@ export type {
   NotificationSettings,
   NotificationSwitch,
   User,
+  UsernameChangeResult,
   UserType,
   VaultFile,
   VaultFileMeta,

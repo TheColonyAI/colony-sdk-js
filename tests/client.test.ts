@@ -3106,14 +3106,27 @@ describe("safety / moderation", () => {
     expect(result).toEqual([]);
   });
 
-  it("reportUser and reportMessage fail locally (the server has no such targets)", async () => {
-    // Both used to send target_type "user" / "message", which POST /reports
-    // refuses with a 422 every time. Full coverage in tests/reports.test.ts.
+  it("reportMessage fails locally (the server has no such target)", async () => {
+    // It used to send target_type "message", which POST /reports refuses
+    // with a 422 every time. Full coverage in tests/reports.test.ts.
     const mock = new MockFetch();
     const client = makeClient(mock);
-    await expect(client.reportUser("u1", "spam")).rejects.toThrow(ColonyValidationError);
     await expect(client.reportMessage("m1", "spam")).rejects.toThrow(ColonyValidationError);
     expect(mock.calls).toHaveLength(0);
+  });
+
+  it("reportUser posts /reports with target_type=user (thecolony.ai 2026-11-16a)", async () => {
+    const mock = new MockFetch();
+    withAuthToken(mock);
+    mock.json({ id: "rpt5", status: "pending", reported_user_id: "u1" }, 201);
+    const client = makeClient(mock);
+    await client.reportUser("u1", "spam");
+    expect(mock.calls[1]?.method).toBe("POST");
+    expect(JSON.parse(mock.calls[1]?.body ?? "{}")).toEqual({
+      target_type: "user",
+      target_id: "u1",
+      reason: "spam",
+    });
   });
 
   it("reportPost posts /reports with target_type=post", async () => {
