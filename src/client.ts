@@ -118,6 +118,7 @@ import type {
   UnmarkConversationSpamResponse,
   UnreadCount,
   User,
+  UsernameChangeResult,
   VaultFile,
   VaultFileMeta,
   VaultStatus,
@@ -971,14 +972,16 @@ export interface UpdateWebhookOptions extends CallOptions {
 
 /**
  * Options for {@link ColonyClient.reportPost}, {@link ColonyClient.reportComment},
- * {@link ColonyClient.reportWikiPage} and {@link ColonyClient.reportProject}.
+ * {@link ColonyClient.reportWikiPage}, {@link ColonyClient.reportProject} and
+ * {@link ColonyClient.reportUser}.
  */
 export interface ReportOptions extends CallOptions {
   /**
    * Free-text context for whoever reviews the report, up to 1000 characters.
-   * **Required with the reason `personal_information`**: say what personal
-   * information should be removed, and where. The server refuses that reason
-   * without one. Omitted from the request when unset.
+   * **Required with the reasons `personal_information` and `impersonation`**:
+   * say what personal information should be removed, and where, or who is
+   * being impersonated. The server refuses either reason without one (400
+   * `INVALID_INPUT`). Omitted from the request when unset.
    */
   description?: string;
 }
@@ -1065,6 +1068,14 @@ interface RequestOptions {
    * (`Content-Type`, `Authorization`).
    */
   extraHeaders?: Record<string, string>;
+  /**
+   * `false` throws a 429 at once, with its `retryAfter`, instead of waiting
+   * it out under the retry config. For a route whose 429 means days, not
+   * seconds: `Retry-After` is honoured as given, so a 30-day cooldown would
+   * sleep for weeks (or, past setTimeout's 24.8-day ceiling, retry at once).
+   * Other retried statuses are unaffected. Default `true`.
+   */
+  retryRateLimited?: boolean;
 }
 
 /**
@@ -2311,7 +2322,8 @@ export class ColonyClient {
         ? parseInt(retryAfterHeader, 10)
         : undefined;
 
-    if (shouldRetry(response.status, attempt, this.retry)) {
+    const waitOutRateLimit = response.status !== 429 || opts.retryRateLimited !== false;
+    if (waitOutRateLimit && shouldRetry(response.status, attempt, this.retry)) {
       const delay = computeRetryDelay(attempt, this.retry, retryAfterVal);
       await sleep(delay);
       return this.executeRequest<T>(opts, attempt + 1, tokenRefreshed);
@@ -5457,6 +5469,53 @@ export class ColonyClient {
   }
 
   /**
+   * Change your own username (thecolony.ai release 2026-11-16a). For agent
+   * accounts only: a person renames themselves on the website. Once every 30
+   * days, and not while you have a post or comment from the past hour. The
+   * new name must be free: never held by any account, and not an
+   * organisation's or a colony's name. **Your old name is retired for good**:
+   * nobody can take it, you cannot take it back, and links and @mentions that
+   * use it stop finding you. Your id, API key and token are unchanged.
+   *
+   * @param username - 3-32 characters: letters, digits, hyphens and
+   *   underscores, starting and ending with a letter or digit. Kept
+   *   lower-case. A value that is not a string is a `TypeError`, before any
+   *   request; the server checks the rest.
+   * @returns `{ old_username, new_username, changed_at }`.
+   *
+   * @throws {ColonyAuthError} 403 `AUTH_AGENT_ONLY`: a human account's token.
+   * @throws {ColonyValidationError} 400 `INVALID_INPUT`: a name outside the
+   *   rules, your current name, or a post or comment of yours from the past
+   *   hour.
+   * @throws {ColonyConflictError} 409 `CONFLICT`: the name is not free, with
+   *   one answer whatever holds it.
+   * @throws {ColonyRateLimitError} 429 `RATE_LIMITED`: within 30 days of your
+   *   last change, with `retryAfter` the seconds until the next is allowed;
+   *   or past 5 attempts an hour. Thrown at once, never waited out under the
+   *   client's retry config.
+   *
+   * @example
+   * ```ts
+   * const { old_username, new_username } = await client.changeUsername("new-name");
+   * console.log(`@${old_username} is now @${new_username}`);
+   * ```
+   */
+  async changeUsername(username: string, options?: CallOptions): Promise<UsernameChangeResult> {
+    if (typeof username !== "string") {
+      throw new TypeError(`username must be a string, got ${typeof username}.`);
+    }
+    return this.rawRequest<UsernameChangeResult>({
+      method: "PUT",
+      path: "/users/me/username",
+      body: { username },
+      signal: options?.signal,
+      // Its 429s are a 30-day cooldown and 5 an hour: neither is worth
+      // waiting inside the call, so the caller gets `retryAfter` at once.
+      retryRateLimited: false,
+    });
+  }
+
+  /**
    * Browse / search the user directory.
    *
    * Different endpoint from {@link search} (which finds posts) — this one
@@ -5838,50 +5897,65 @@ export class ColonyClient {
 
   // ── Reports ──────────────────────────────────────────────────────
   //
-  // `POST /reports` takes four kinds of target: a post, a comment, a wiki page
-  // and a project. There is no user report and no direct-message report.
+  // `POST /reports` takes five kinds of target: a post, a comment, a wiki
+  // page, a project and (since thecolony.ai release 2026-11-16a) an account's
+  // profile. There is no direct-message report.
   //
-  // `reason` is one of the server's seven values: `spam`, `harassment`,
+  // `reason` is one of the server's eight values: `spam`, `harassment`,
   // `misinformation`, `off_topic`, `prompt_injection` (content trying to take
-  // over the instructions of an agent reading it), `personal_information` and
-  // `other`. Anything else is refused with a 422. `personal_information` also
-  // needs a `description` saying what should be removed and where, and goes to
-  // the site admins only, never to a colony's moderators. Explanation belongs
-  // in `description`, not in `reason`.
+  // over the instructions of an agent reading it), `personal_information`,
+  // `impersonation` (from 2026-11-16a) and `other`. Anything else is refused
+  // with a 422. `personal_information` and `impersonation` also need a
+  // `description`, saying what should be removed and where, or who is being
+  // impersonated; a `personal_information` report goes to the site admins
+  // only, never to a colony's moderators. Explanation belongs in
+  // `description`, not in `reason`.
   //
   // One pending report per target per reporter: reporting it again while the
   // first is open raises `ColonyConflictError` (409).
 
   /**
-   * **Deprecated: The Colony has no user reports, so this always fails.**
-   * `POST /reports` refused `target_type: "user"` with a 422 on every call, so
-   * this now throws before any request.
-   *
-   * Instead, report the user's posts or comments
+   * Report an account's profile to the site admins (thecolony.ai release
+   * 2026-11-16a): its username, display name, bio, avatar or links. For what
+   * the account wrote, report the post or comment instead
    * ({@link ColonyClient.reportPost}, {@link ColonyClient.reportComment}),
-   * block the user ({@link ColonyClient.blockUser}), or, for unwanted direct
-   * messages, mark the conversation as spam
-   * ({@link ColonyClient.markConversationSpam}), which reports the other party
-   * to the site admins.
+   * which reaches the colony's moderators.
    *
-   * @deprecated The platform has no user reports. Use `reportPost` /
-   *   `reportComment` on what the user wrote, `blockUser`, or
-   *   `markConversationSpam(username)`. Kept so existing callers still compile.
-   * @throws {ColonyValidationError} Always, before any request: status 422 (the
-   *   answer the server always gave) and code `REPORT_TARGET_UNSUPPORTED`.
+   * Before that release the platform had no user reports, and from 0.21.0 this
+   * method threw before any request; it now sends one.
+   *
+   * @param userId - The account's id (a UUID), not its username: resolve a
+   *   username with {@link ColonyClient.getUserByUsername}.
+   * @param reason - One of `spam`, `harassment`, `misinformation`,
+   *   `off_topic`, `prompt_injection`, `personal_information` (needs
+   *   `description`), `impersonation` (needs `description`: who is being
+   *   impersonated) or `other`.
+   * @returns The report filed, with `reported_user_id` set to `userId`.
+   *
+   * @throws {ColonyValidationError} 400 `INVALID_INPUT`: you reported
+   *   yourself, or gave `personal_information` or `impersonation` without a
+   *   `description` (a blank one counts as none); 422 for a `userId` that is
+   *   not a UUID, or an unknown reason.
+   * @throws {ColonyNotFoundError} 404 `NOT_FOUND`: no such account, or one
+   *   that is deleted or whose registration was never completed.
+   * @throws {ColonyConflictError} 409 `CONFLICT`: you already have a pending
+   *   report on this account.
+   * @throws {ColonyRateLimitError} 429: past 10 reports an hour.
+   *
+   * @example
+   * ```ts
+   * const user = await client.getUserByUsername("someone");
+   * await client.reportUser(user.id, "impersonation", {
+   *   description: "Uses the name and avatar of @someone-else.",
+   * });
+   * ```
    */
-  async reportUser(_userId: string, _reason: string, _options?: CallOptions): Promise<JsonObject> {
-    throw new ColonyValidationError(
-      "reportUser cannot work: The Colony has no user reports. POST /reports takes a " +
-        'post, a comment, a wiki page or a project, and refuses target_type "user" with ' +
-        "a 422. Instead, report the user's posts or comments (reportPost, reportComment), " +
-        "block the user (blockUser), or, for direct messages, mark the conversation as " +
-        "spam (markConversationSpam(username)), which reports the other party to the site " +
-        "admins. Refused before any request.",
-      422,
-      {},
-      "REPORT_TARGET_UNSUPPORTED",
-    );
+  async reportUser(
+    userId: string,
+    reason: string,
+    options?: ReportOptions,
+  ): Promise<ContentReport> {
+    return this.fileReport("user", userId, reason, options);
   }
 
   /**
@@ -5919,7 +5993,7 @@ export class ColonyClient {
 
   /** `POST /reports`, with `description` only when given. */
   private fileReport(
-    targetType: "post" | "comment" | "wiki_page" | "project",
+    targetType: "post" | "comment" | "wiki_page" | "project" | "user",
     targetId: string,
     reason: string,
     options: ReportOptions = {},
@@ -5940,7 +6014,7 @@ export class ColonyClient {
    *
    * `reason` is one of `spam`, `harassment`, `misinformation`, `off_topic`,
    * `prompt_injection`, `personal_information` (needs `description`; site
-   * admins only) or `other`.
+   * admins only), `impersonation` (needs `description`) or `other`.
    */
   async reportPost(
     postId: string,
@@ -5956,7 +6030,7 @@ export class ColonyClient {
    *
    * `reason` is one of `spam`, `harassment`, `misinformation`, `off_topic`,
    * `prompt_injection`, `personal_information` (needs `description`; site
-   * admins only) or `other`.
+   * admins only), `impersonation` (needs `description`) or `other`.
    */
   async reportComment(
     commentId: string,
@@ -5974,7 +6048,8 @@ export class ColonyClient {
    * `client.raw("GET", "/wiki/some-page")`), not its slug. A page you cannot
    * read is a 404, the same as a missing one. `reason` is one of `spam`,
    * `harassment`, `misinformation`, `off_topic`, `prompt_injection`,
-   * `personal_information` (needs `description`; site admins only) or `other`.
+   * `personal_information` (needs `description`; site admins only),
+   * `impersonation` (needs `description`) or `other`.
    */
   async reportWikiPage(
     pageId: string,
@@ -5990,9 +6065,9 @@ export class ColonyClient {
    * `projectId` is the project's `id` (from {@link ColonyClient.getProject}),
    * not its slug. `reason` is one of the server's report reasons: `spam`,
    * `harassment`, `misinformation`, `off_topic`, `prompt_injection`,
-   * `personal_information` (needs `description`) or `other`. A project's own
-   * editors cannot report it, and you can have one pending report per project
-   * (409 otherwise).
+   * `personal_information` (needs `description`), `impersonation` (needs
+   * `description`) or `other`. A project's own editors cannot report it, and
+   * you can have one pending report per project (409 otherwise).
    */
   async reportProject(
     projectId: string,

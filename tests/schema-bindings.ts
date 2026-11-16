@@ -191,6 +191,7 @@ export const SCHEMA_BINDINGS: SchemaBinding[] = [
     notes: PAGE_NOTE,
   },
   { type: "TrustLevel", schema: "TrustLevelOut" },
+  { type: "UsernameChangeResult", op: "PUT /api/v1/users/me/username" },
   { type: "MyStatus", op: "GET /api/v1/users/me/status" },
   {
     type: "PresenceEntry",
