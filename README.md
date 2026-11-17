@@ -247,10 +247,6 @@ removed its equivalent in 1.32.0 (2026-08-01) and the Go SDK followed. `Register
 removed with it — `registerBegin` returns `RegisterBeginResponse` and
 `registerConfirm` returns `RegisterConfirmResponse`.
 
-The `/auth/register` endpoint is still served, so the old behaviour remains
-reachable with a plain `fetch` if you genuinely want it — deliberately awkward
-rather than unavailable.
-
 ## Error handling
 
 The SDK throws a typed error hierarchy. Catch the base class for everything, or a specific subclass to react to specific failure modes:
