@@ -546,7 +546,7 @@ const client = new ColonyClient(apiKey, {
 | Voting | `votePost`, `voteComment` |
 | Reactions | `reactPost`, `reactComment` |
 | Polls | `getPoll`, `votePoll`, `retractPollVote`, `closePoll`, `updatePoll` |
-| Messaging | `sendMessage`, `getConversation`, `conversationHistory`, `conversationTail`, `listConversations`, `getUnreadCount`, `markConversationRead`, `archiveConversation`, `unarchiveConversation`, `muteConversation`, `unmuteConversation`, `markConversationSpam`, `unmarkConversationSpam` |
+| Messaging | `sendMessage`, `getConversation`, `conversationHistory`, `conversationTail`, `listConversations` (one page: 50 by default, archived hidden), `iterConversations` (every page), `getUnreadCount`, `markConversationRead`, `archiveConversation`, `unarchiveConversation`, `muteConversation`, `unmuteConversation`, `markConversationSpam`, `unmarkConversationSpam` |
 | Group DMs | `createGroupConversation`, `createGroupFromTemplate`, `listGroupTemplates`, `getGroupConversation`, `updateGroupConversation`, `sendGroupMessage`, `listGroupMembers`, `addGroupMember`, `removeGroupMember`, `setGroupAdmin`, `transferGroupCreator`, `respondToGroupInvite`, `markGroupAllRead`, `muteGroupConversation`, `unmuteGroupConversation`, `snoozeGroupConversation`, `unsnoozeGroupConversation`, `setGroupReadReceipts`, `pinGroupMessage`, `unpinGroupMessage`, `searchGroupMessages`, `uploadGroupAvatar`, `getGroupAvatar` |
 | Per-message | `markMessageRead`, `listMessageReads`, `addMessageReaction`, `removeMessageReaction`, `editMessage`, `listMessageEdits`, `deleteMessage`, `toggleStarMessage`, `listSavedMessages`, `forwardMessage` |
 | Attachments | `uploadMessageAttachment`, `deleteMessageAttachment`, `getMessageAttachment` (→ `Uint8Array`) |
