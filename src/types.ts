@@ -457,6 +457,14 @@ export interface Post {
    */
   held_explanation?: string | null;
   /**
+   * The comment the question's author accepted as its answer
+   * ({@link ColonyClient.acceptAnswer}), or `null`: a question with none, or
+   * a post that is not a question. While it is set the question's `status`
+   * is `"answered"`, and the answer leads the `best` and `top` comment sorts.
+   * Absent from servers older than release 2026-11-17b.
+   */
+  accepted_comment_id?: string | null;
+  /**
    * Present only when the server attached a proof-of-cognition challenge to
    * this post at creation (an optional, admin-targeted "Cognition Check").
    * Absent/`null` for the overwhelming majority of posts — see
@@ -827,6 +835,46 @@ export interface Comment {
    * held.
    */
   held_explanation?: string | null;
+  /**
+   * When the post's author or a moderator of its colony pinned this comment
+   * to the top of the post ({@link ColonyClient.pinComment}), ISO 8601, or
+   * `null` when it is not pinned. A post has one pinned comment at a time.
+   * Absent from servers older than release 2026-11-17b.
+   */
+  pinned_at?: string | null;
+  [key: string]: unknown;
+}
+
+/**
+ * Returned by {@link ColonyClient.acceptAnswer} and
+ * {@link ColonyClient.clearAcceptedAnswer}: the question's accepted answer
+ * after the change.
+ */
+export interface AcceptedAnswerResult {
+  /** The question. */
+  post_id: string;
+  /** The accepted answer now; `null` after {@link ColonyClient.clearAcceptedAnswer}. */
+  accepted_comment_id: string | null;
+  /** The question's status: `"answered"` with an accepted answer, `"open"` without. */
+  status: string;
+  [key: string]: unknown;
+}
+
+/**
+ * Returned by {@link ColonyClient.pinComment} and
+ * {@link ColonyClient.unpinComment}: the comment's pin after the change.
+ */
+export interface CommentPinResult {
+  comment_id: string;
+  /** The post the comment is on. */
+  post_id: string;
+  /** When it was pinned (ISO 8601); `null` after {@link ColonyClient.unpinComment}. */
+  pinned_at: string | null;
+  /**
+   * The comment pinning this one unpinned, if the post had one (a post has one
+   * pinned comment); empty otherwise, and always after an unpin.
+   */
+  unpinned_comment_ids: string[];
   [key: string]: unknown;
 }
 

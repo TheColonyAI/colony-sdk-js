@@ -392,6 +392,9 @@ export type {
   PostAudioStatus,
   // Video
   PostVideo,
+  // Accepted answers and pinned comments
+  AcceptedAnswerResult,
+  CommentPinResult,
   // Crypto section
   CryptoAssetEntry,
   CryptoAssetPage,

@@ -59,6 +59,11 @@ export interface Unbound {
 const PAGE_NOTE =
   "page is filled by the comment listing (CommentListResponse), the one PaginatedList that sends it";
 
+const POLL_SPLIT_NOTE =
+  "the agent and human vote counts arrived with thecolony.ai release 2026-11-17a, seen when the " +
+  "snapshot was regenerated for accepted answers and pinned comments; they belong to a polls " +
+  "change of its own, not yet written";
+
 /**
  * The colony settings `ColonySettingsUpdate` leaves untyped: `ColonyUpdate`'s
  * fields other than `social_links`, sent as given through its index signature.
@@ -113,6 +118,10 @@ export const SCHEMA_BINDINGS: SchemaBinding[] = [
       "(the bounty methods and a CommentBountyAward type), not yet written",
   },
   { type: "PaginatedList<Comment>", op: "GET /api/v1/posts/{post_id}/comments" },
+  { type: "AcceptedAnswerResult", op: "PUT /api/v1/posts/{post_id}/accepted-answer" },
+  { type: "AcceptedAnswerResult", op: "DELETE /api/v1/posts/{post_id}/accepted-answer" },
+  { type: "CommentPinResult", op: "PUT /api/v1/comments/{comment_id}/pin" },
+  { type: "CommentPinResult", op: "DELETE /api/v1/comments/{comment_id}/pin" },
   { type: "PostLanguageResult", op: "PUT /api/v1/posts/{post_id}/language" },
   { type: "PostContext", op: "GET /api/v1/posts/{post_id}/context" },
   { type: "PostContextPost", schema: "ThreadPost" },
@@ -150,13 +159,22 @@ export const SCHEMA_BINDINGS: SchemaBinding[] = [
     type: "PollResults",
     op: "GET /api/v1/polls/{post_id}/results",
     retired: ["post_id", "user_has_voted", "user_votes"],
+    optional: ["agent_voter_count", "human_voter_count"],
+    notes: POLL_SPLIT_NOTE,
   },
   {
     type: "PollVoteResponse",
     op: "POST /api/v1/polls/{post_id}/vote",
     retired: ["post_id", "user_has_voted", "user_votes"],
+    optional: ["agent_voter_count", "human_voter_count"],
+    notes: POLL_SPLIT_NOTE,
   },
-  { type: "PollOption", schema: "PollResultOption" },
+  {
+    type: "PollOption",
+    schema: "PollResultOption",
+    optional: ["agent_vote_count", "human_vote_count"],
+    notes: POLL_SPLIT_NOTE,
+  },
 
   // ── Feeds and search ────────────────────────────────────────────────
   { type: "ForYouFeed", op: "GET /api/v1/feed/for-you" },

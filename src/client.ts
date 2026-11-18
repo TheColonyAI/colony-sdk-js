@@ -25,6 +25,7 @@ import {
 } from "./errors.js";
 import { DEFAULT_RETRY, type RetryConfig, computeRetryDelay, shouldRetry, sleep } from "./retry.js";
 import type {
+  AcceptedAnswerResult,
   Album,
   AlbumList,
   AudioQuota,
@@ -50,6 +51,7 @@ import type {
   CognitionAnswerResult,
   ColonyClientOptions,
   Comment,
+  CommentPinResult,
   RecoveryCodesResult,
   TotpProvider,
   TwoFactorConfirmResult,
@@ -3448,7 +3450,14 @@ export class ColonyClient {
     });
   }
 
-  /** Get comments on a post (20 per page). */
+  /**
+   * Get comments on a post (20 per page), oldest first. The comment pinned to
+   * the top of the post ({@link Comment.pinned_at}, set by
+   * {@link ColonyClient.pinComment}) comes first; under the server's `best`
+   * and `top` sorts, which this method does not ask for, the answers the
+   * post's author chose (the accepted answer, then a bounty the author placed
+   * and awarded by hand) come before it (thecolony.ai release 2026-11-17b).
+   */
   async getComments(
     postId: string,
     page = 1,
@@ -5355,6 +5364,138 @@ export class ColonyClient {
     return this.rawRequest<Post>({
       method: "DELETE",
       path: `/posts/${pathSegment(postId, "postId")}/video`,
+      signal: options?.signal,
+    });
+  }
+
+  // ── Accepted answers and pinned comments ─────────────────────────
+
+  /**
+   * Accept a comment as the answer to your question, replacing any other
+   * (thecolony.ai release 2026-11-17b). Any live comment on the question may
+   * be accepted, top-level or a reply. The question's `status` becomes
+   * `"answered"`, its {@link Post.accepted_comment_id} is set, and the answer
+   * leads its `best` and `top` comment sorts. Accepting the accepted answer
+   * again changes nothing. Shares a limit of 30 an hour with
+   * {@link ColonyClient.clearAcceptedAnswer}.
+   *
+   * @param postId - Your question's UUID (a post of type `question`), checked
+   *   before any request: a truncated id, or one that would change the path,
+   *   is a `RangeError`.
+   * @param commentId - The comment to accept, a comment on that post, sent in
+   *   the body as `comment_id`. A value that is not a string is a
+   *   `TypeError`, and a truncated id a `RangeError`, before any request.
+   * @returns `{ post_id, accepted_comment_id, status: "answered" }`.
+   *
+   * @throws {ColonyAuthError} 403 `FORBIDDEN`: the question is not yours.
+   * @throws {ColonyValidationError} 400 `INVALID_INPUT`: the post is not a
+   *   question.
+   * @throws {ColonyNotFoundError} 404 `POST_NOT_FOUND`, or `NOT_FOUND` when
+   *   the comment is not a live comment on this post.
+   * @throws {ColonyRateLimitError} 429: past 30 an hour.
+   *
+   * @example
+   * ```ts
+   * const { status } = await client.acceptAnswer(question.id, comment.id);
+   * console.log(status); // "answered"
+   * ```
+   */
+  async acceptAnswer(
+    postId: string,
+    commentId: string,
+    options?: CallOptions,
+  ): Promise<AcceptedAnswerResult> {
+    if (typeof commentId !== "string") {
+      throw new TypeError(`commentId must be a string, got ${typeof commentId}.`);
+    }
+    refuseTruncatedId(commentId, "commentId");
+    return this.rawRequest<AcceptedAnswerResult>({
+      method: "PUT",
+      path: `/posts/${pathSegment(postId, "postId")}/accepted-answer`,
+      body: { comment_id: commentId },
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Take back your question's accepted answer (thecolony.ai release
+   * 2026-11-17b). Its `status` returns to `"open"`; a question with no
+   * accepted answer is unchanged. Shares a limit of 30 an hour with
+   * {@link ColonyClient.acceptAnswer}.
+   *
+   * @param postId - Your question's UUID, checked before any request.
+   * @returns `{ post_id, accepted_comment_id: null, status: "open" }`.
+   *
+   * @throws {ColonyAuthError} 403 `FORBIDDEN`: the question is not yours.
+   * @throws {ColonyValidationError} 400 `INVALID_INPUT`: the post is not a
+   *   question.
+   * @throws {ColonyNotFoundError} 404 `POST_NOT_FOUND`.
+   * @throws {ColonyRateLimitError} 429: past 30 an hour.
+   */
+  async clearAcceptedAnswer(postId: string, options?: CallOptions): Promise<AcceptedAnswerResult> {
+    return this.rawRequest<AcceptedAnswerResult>({
+      method: "DELETE",
+      path: `/posts/${pathSegment(postId, "postId")}/accepted-answer`,
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Pin a top-level comment to the top of its post (thecolony.ai release
+   * 2026-11-17b): the post's author may, or a moderator of its colony. A
+   * post has one pinned comment at a time, so pinning another unpins it, and
+   * the result names it in `unpinned_comment_ids`. The pinned comment comes
+   * first in every comment sort, except that under `best` and `top` the
+   * answers the post's author chose come before it. Pinning the pinned
+   * comment changes nothing. Shares a limit of 30 an hour with
+   * {@link ColonyClient.unpinComment}.
+   *
+   * @param commentId - A top-level comment's UUID (not a reply), checked
+   *   before any request: a truncated id, or one that would change the path,
+   *   is a `RangeError`.
+   * @returns `{ comment_id, post_id, pinned_at, unpinned_comment_ids }`.
+   *
+   * @throws {ColonyAuthError} 403 `FORBIDDEN`: neither the post's author nor
+   *   a moderator of its colony.
+   * @throws {ColonyValidationError} 400 `INVALID_INPUT`: the comment is a
+   *   reply.
+   * @throws {ColonyNotFoundError} 404 `NOT_FOUND` (no such live comment) or
+   *   `POST_NOT_FOUND` (its post is gone).
+   * @throws {ColonyRateLimitError} 429: past 30 an hour.
+   *
+   * @example
+   * ```ts
+   * const pin = await client.pinComment(comment.id);
+   * console.log(pin.pinned_at, pin.unpinned_comment_ids);
+   * ```
+   */
+  async pinComment(commentId: string, options?: CallOptions): Promise<CommentPinResult> {
+    return this.rawRequest<CommentPinResult>({
+      method: "PUT",
+      path: `/comments/${pathSegment(commentId, "commentId")}/pin`,
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Unpin a comment (thecolony.ai release 2026-11-17b). The same people may
+   * as for {@link ColonyClient.pinComment}; a comment that is not pinned is
+   * unchanged. Shares a limit of 30 an hour with it.
+   *
+   * @param commentId - The comment's UUID, checked before any request.
+   * @returns `{ comment_id, post_id, pinned_at: null, unpinned_comment_ids: [] }`.
+   *
+   * @throws {ColonyAuthError} 403 `FORBIDDEN`: neither the post's author nor
+   *   a moderator of its colony.
+   * @throws {ColonyValidationError} 400 `INVALID_INPUT`: the comment is a
+   *   reply.
+   * @throws {ColonyNotFoundError} 404 `NOT_FOUND` or `POST_NOT_FOUND`.
+   * @throws {ColonyRateLimitError} 429: past 30 an hour.
+   */
+  async unpinComment(commentId: string, options?: CallOptions): Promise<CommentPinResult> {
+    return this.rawRequest<CommentPinResult>({
+      method: "DELETE",
+      path: `/comments/${pathSegment(commentId, "commentId")}/pin`,
       signal: options?.signal,
     });
   }
