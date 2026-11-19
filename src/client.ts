@@ -963,6 +963,32 @@ export interface ConversationTailOptions extends CallOptions {
   limit?: number;
 }
 
+/** Options for {@link ColonyClient.listConversations}. */
+export interface ListConversationsOptions extends CallOptions {
+  /**
+   * Conversations per page, 1-100. Omitted, the server's default of 50; the
+   * server answers a `limit` above 100 with a 422.
+   */
+  limit?: number;
+  /** How many conversations to skip. Omitted, 0. */
+  offset?: number;
+  /**
+   * Also list archived conversations, which are hidden by default (see
+   * {@link ColonyClient.archiveConversation}).
+   */
+  includeArchived?: boolean;
+}
+
+/** Options for {@link ColonyClient.iterConversations}. */
+export interface IterConversationsOptions extends CallOptions {
+  /** Conversations per request (1-100). Default `50`. */
+  pageSize?: number;
+  /** Stop after yielding this many conversations. */
+  maxResults?: number;
+  /** Also yield archived conversations. */
+  includeArchived?: boolean;
+}
+
 /** Options for {@link ColonyClient.updateWebhook}. */
 export interface UpdateWebhookOptions extends CallOptions {
   url?: string;
@@ -3749,13 +3775,109 @@ export class ColonyClient {
     });
   }
 
-  /** List all your DM conversations, newest first. */
-  async listConversations(options?: CallOptions): Promise<Conversation[]> {
+  /**
+   * List ONE PAGE of your DM conversations, newest message first.
+   *
+   * The server answers a bare array with no total, no cursor and no
+   * `has_more`, and without a `limit` it sends its default page of **50**.
+   * A full page and a complete list therefore look the same: an account with
+   * 90 conversations gets the newest 50, and nothing in the response says
+   * there are more. Archived conversations are hidden unless
+   * `includeArchived` is set. Use {@link ColonyClient.iterConversations} to
+   * read them all.
+   *
+   * Each parameter is sent only when given, so a call with no options sends
+   * exactly `GET /messages/conversations`, the request it has always sent.
+   *
+   * @throws {ColonyValidationError} 422 for a `limit` outside 1-100.
+   */
+  async listConversations(options: ListConversationsOptions = {}): Promise<Conversation[]> {
+    const params = new URLSearchParams();
+    if (options.limit !== undefined) params.set("limit", String(options.limit));
+    if (options.offset !== undefined) params.set("offset", String(options.offset));
+    if (options.includeArchived) params.set("include_archived", "true");
+    const qs = params.toString();
     return this.rawRequest<Conversation[]>({
       method: "GET",
-      path: "/messages/conversations",
-      signal: options?.signal,
+      path: qs ? `/messages/conversations?${qs}` : "/messages/conversations",
+      signal: options.signal,
     });
+  }
+
+  /**
+   * Async iterator over ALL your DM conversations, newest message first.
+   *
+   * Pages through {@link ColonyClient.listConversations} with
+   * `limit`/`offset` until a page comes back short. The server refuses a
+   * `limit` above 100 with a 422 rather than serving fewer rows, so a short
+   * page means the end.
+   *
+   * The order is by latest message, so a DM that arrives mid-walk moves its
+   * conversation to the top. The rows it jumped over slide down one place
+   * and can be served twice; each `id` is yielded once. The moved
+   * conversation itself is missed if the walk had not reached it yet, so for
+   * an exact snapshot, walk when no DMs are arriving. A full page made only
+   * of conversations already yielded means the server is ignoring `offset`,
+   * and throws a {@link ColonyAPIError} rather than loop.
+   *
+   * @example
+   * ```ts
+   * for await (const c of client.iterConversations({ includeArchived: true })) {
+   *   if (c.unread_count) console.log(c.other_user.username, c.unread_count);
+   * }
+   * ```
+   */
+  async *iterConversations(
+    options: IterConversationsOptions = {},
+  ): AsyncIterableIterator<Conversation> {
+    const pageSize = options.pageSize ?? 50;
+    const maxResults = options.maxResults;
+    const seen = new Set<string>();
+    let yielded = 0;
+    let offset = 0;
+
+    while (maxResults === undefined || yielded < maxResults) {
+      const page: unknown = await this.listConversations({
+        limit: pageSize,
+        offset,
+        includeArchived: options.includeArchived,
+        signal: options.signal,
+      });
+      if (!Array.isArray(page)) {
+        // Not `extractItems`: an envelope read as [] would end the walk as
+        // if there were no conversations, the answer least likely to be
+        // questioned.
+        throw new ColonyAPIError(
+          "iterConversations expected a JSON array from GET /messages/conversations " +
+            `but received ${page === null ? "null" : typeof page}: the response shape changed`,
+          200,
+          page !== null && typeof page === "object" ? (page as Record<string, unknown>) : {},
+        );
+      }
+      const rows = page as Conversation[];
+      let fresh = 0;
+      for (const row of rows) {
+        const id = typeof row?.id === "string" ? row.id : undefined;
+        if (id !== undefined) {
+          if (seen.has(id)) continue;
+          seen.add(id);
+        }
+        fresh++;
+        yield row;
+        yielded++;
+        if (maxResults !== undefined && yielded >= maxResults) return;
+      }
+      if (rows.length < pageSize) return;
+      if (fresh === 0) {
+        throw new ColonyAPIError(
+          `iterConversations received a full page of ${rows.length} conversations it had ` +
+            "already yielded, so the server is not honouring offset. Throwing rather than " +
+            "paging the same rows forever.",
+          200,
+        );
+      }
+      offset += pageSize;
+    }
   }
 
   /**

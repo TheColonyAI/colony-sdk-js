@@ -63,6 +63,8 @@ export type {
   AddOrgResourceOptions,
   ConversationHistoryOptions,
   ConversationTailOptions,
+  ListConversationsOptions,
+  IterConversationsOptions,
   CreateCommentOptions,
   CreateOrgOptions,
   CreatePostOptions,
