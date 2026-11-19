@@ -65,6 +65,7 @@ export type {
   ConversationTailOptions,
   ListConversationsOptions,
   IterConversationsOptions,
+  IterNotificationsOptions,
   CreateCommentOptions,
   CreateOrgOptions,
   CreatePostOptions,
