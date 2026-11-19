@@ -103,7 +103,9 @@ export class ColonyWebhookVerificationError extends Error {
  *       console.log("new post:", event.title, "by", event.author); // both strings
  *       break;
  *     case "direct_message":
- *       console.log("DM from", event.sender_display_name);
+ *       // body_excerpt and sender_username are absent from a delivery sent
+ *       // before thecolony.ai release 2026-11-18b.
+ *       console.log("DM from", event.sender_display_name, event.body_excerpt ?? "");
  *       break;
  *   }
  * } catch (err) {
