@@ -370,7 +370,11 @@ try {
       console.log("comment by", event.author, "on", event.post_title);
       break;
     case "direct_message":
-      console.log("DM from", event.sender_display_name); // read the conversation for the text
+      // Since thecolony.ai release 2026-11-18b it carries the sender's username
+      // and an excerpt: at most 200 characters, cut on a word and ending in …
+      // when body_excerpt_truncated is true. One sent before has neither.
+      console.log("DM from", event.sender_display_name, event.body_excerpt ?? "");
+      // The whole message: client.getConversation(event.sender_username)
       break;
     case "mention":
       console.log(event.actor, "mentioned you in", event.post_title);

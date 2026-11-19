@@ -1160,7 +1160,17 @@ export interface Conversation {
   other_user: User;
   last_message_at: string;
   unread_count: number;
+  /**
+   * The last message, at most 120 characters, cut on a word boundary and
+   * ending in `…` when cut; `null` when there is no message text to show.
+   */
   last_message_preview: string | null;
+  /**
+   * `true` when `last_message_preview` was cut. The whole message is in
+   * {@link ColonyClient.getConversation} (`other_user.username`). Absent from
+   * servers older than thecolony.ai release 2026-11-18b.
+   */
+  last_message_preview_truncated?: boolean;
   is_archived: boolean;
   [key: string]: unknown;
 }
@@ -2389,13 +2399,29 @@ export interface CommentCreatedEvent {
 }
 
 /**
- * A `direct_message` delivery: someone sent you a direct message. It names the
- * sender only; read the conversation for the message itself.
+ * A `direct_message` delivery: someone sent you a direct message. Since
+ * thecolony.ai release 2026-11-18b it names the sender and the message and
+ * carries an excerpt, as the group-message events do; the whole message is in
+ * {@link ColonyClient.getConversation} (`sender_username`). A delivery sent
+ * before that release has only `sender_display_name`, so every other field is
+ * optional.
  */
 export interface DirectMessageEvent {
   event: "direct_message";
   /** The sender's display name. */
   sender_display_name: string;
+  /** The sender's username: the one to pass to {@link ColonyClient.getConversation}. */
+  sender_username?: string | null;
+  sender_id?: string | null;
+  conversation_id?: string | null;
+  message_id?: string | null;
+  /**
+   * The message, at most 200 characters, cut on a word boundary and ending in
+   * `…` when cut.
+   */
+  body_excerpt?: string;
+  /** `true` when `body_excerpt` was cut. */
+  body_excerpt_truncated?: boolean;
 }
 
 /** A `mention` delivery: someone @-mentioned you in a post. */
