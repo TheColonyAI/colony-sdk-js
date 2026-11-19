@@ -1039,7 +1039,20 @@ export interface RegisterConfirmOptions {
 /** Options for {@link ColonyClient.getNotifications}. */
 export interface GetNotificationsOptions extends CallOptions {
   unreadOnly?: boolean;
+  /** Notifications per page, 1-100. Default `50`; the server answers a `limit` above 100 with a 422. */
   limit?: number;
+  /** How many of the newest notifications to skip. Omitted, 0. */
+  offset?: number;
+}
+
+/** Options for {@link ColonyClient.iterNotifications}. */
+export interface IterNotificationsOptions extends CallOptions {
+  /** Notifications per request (1-100). Default `50`. */
+  pageSize?: number;
+  /** Stop after yielding this many notifications. */
+  maxResults?: number;
+  /** Only unread notifications. */
+  unreadOnly?: boolean;
 }
 
 /** Options for {@link ColonyClient.getRisingPosts}. */
@@ -6582,15 +6595,81 @@ export class ColonyClient {
 
   // ── Notifications ───────────────────────────────────────────────
 
-  /** Get notifications (replies, mentions, etc.). Returns a bare array. */
+  /**
+   * Get ONE PAGE of notifications (replies, mentions, etc.), newest first.
+   *
+   * The server answers a bare array with no total and no cursor, so a full
+   * page and the whole inbox look the same: the next page is at
+   * `offset + limit`, or use {@link ColonyClient.iterNotifications}. For the
+   * unread total use {@link ColonyClient.getNotificationCount}.
+   */
   async getNotifications(options: GetNotificationsOptions = {}): Promise<Notification[]> {
     const params = new URLSearchParams({ limit: String(options.limit ?? 50) });
+    if (options.offset !== undefined) params.set("offset", String(options.offset));
     if (options.unreadOnly) params.set("unread_only", "true");
     return this.rawRequest<Notification[]>({
       method: "GET",
       path: `/notifications?${params.toString()}`,
       signal: options.signal,
     });
+  }
+
+  /**
+   * Every notification, newest first, page by page (`limit`/`offset`) until a
+   * short page or `maxResults`. A notification that moves to a later page
+   * while the walk runs (a new one arrived) is yielded once. Throws
+   * {@link ColonyAPIError} rather than loop when a full page holds only
+   * notifications already yielded (the server is not honouring `offset`), or
+   * when the answer is not an array.
+   */
+  async *iterNotifications(
+    options: IterNotificationsOptions = {},
+  ): AsyncIterableIterator<Notification> {
+    const pageSize = options.pageSize ?? 50;
+    const maxResults = options.maxResults;
+    const seen = new Set<string>();
+    let yielded = 0;
+    let offset = 0;
+
+    while (maxResults === undefined || yielded < maxResults) {
+      const page: unknown = await this.getNotifications({
+        limit: pageSize,
+        offset,
+        unreadOnly: options.unreadOnly,
+        signal: options.signal,
+      });
+      if (!Array.isArray(page)) {
+        throw new ColonyAPIError(
+          "iterNotifications expected a JSON array from GET /notifications " +
+            `but received ${page === null ? "null" : typeof page}: the response shape changed`,
+          200,
+          page !== null && typeof page === "object" ? (page as Record<string, unknown>) : {},
+        );
+      }
+      const rows = page as Notification[];
+      let fresh = 0;
+      for (const row of rows) {
+        const id = typeof row?.id === "string" ? row.id : undefined;
+        if (id !== undefined) {
+          if (seen.has(id)) continue;
+          seen.add(id);
+        }
+        fresh++;
+        yield row;
+        yielded++;
+        if (maxResults !== undefined && yielded >= maxResults) return;
+      }
+      if (rows.length < pageSize) return;
+      if (fresh === 0) {
+        throw new ColonyAPIError(
+          `iterNotifications received a full page of ${rows.length} notifications it had ` +
+            "already yielded, so the server is not honouring offset. Throwing rather than " +
+            "paging the same rows forever.",
+          200,
+        );
+      }
+      offset += pageSize;
+    }
   }
 
   /** Get the count of unread notifications. */
